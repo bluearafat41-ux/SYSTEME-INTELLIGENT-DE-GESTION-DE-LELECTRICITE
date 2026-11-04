@@ -1,10 +1,15 @@
-from flask import Flask, render_template_string, abort
+from flask import Flask, render_template_string, abort, request, redirect, url_for, session, flash
+from werkzeug.security import generate_password_hash, check_password_hash
+import secrets
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SMART_ENERGY_SECRET", "smart-energy-monitor-local-dev-key-change-before-deployment")
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 
 # ============================================================
 # CONFIGURATION
@@ -22,6 +27,24 @@ def get_db():
     db = sqlite3.connect(DATABASE)
     db.row_factory = sqlite3.Row
     return db
+
+
+def init_auth_db():
+    """Crée uniquement la table des comptes, sans modifier les tables énergétiques."""
+    DATABASE.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DATABASE) as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS utilisateurs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nom TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                mot_de_passe TEXT NOT NULL,
+                date_creation TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+init_auth_db()
 
 
 # ============================================================
@@ -59,6 +82,16 @@ def json_data(data):
 # ============================================================
 
 def page_template(title, content, active="home"):
+
+    page_notes = {
+        "home": "Indicateurs globaux et état général de la plateforme.",
+        "batiment": "Vue des espaces enregistrés et de leur consommation.",
+        "historique": "Suivi chronologique des mesures enregistrées.",
+        "comparaisons": "Comparaison des consommations par espace et équipement.",
+        "alertes": "Anomalies énergétiques enregistrées dans la base.",
+        "optimisations": "Recommandations associées aux alertes détectées.",
+    }
+    floating_note = page_notes.get(active, "Espace de gestion Smart Energy Monitor.")
 
     return f"""
 <!DOCTYPE html>
@@ -1274,33 +1307,6 @@ footer {{
 }}
 
 
-
-/* BARRE DES COMMANDES */
-.top-toolbar {{ display:flex; justify-content:flex-end; align-items:center; gap:10px; margin:18px 30px 0 292px; position:relative; z-index:90; }}
-.toolbar-button {{ border:1px solid #dce9df; background:#fff; color:#173d2a; border-radius:12px; padding:10px 14px; font-weight:800; font-size:12px; cursor:pointer; transition:.2s; }}
-.toolbar-button:hover {{ border-color:#238653; transform:translateY(-1px); }}
-.translate-panel {{ display:none; background:#fff; border:1px solid #dce9df; border-radius:14px; padding:12px; box-shadow:0 12px 30px rgba(0,0,0,.12); }}
-.translate-panel.open {{ display:block; }}
-.goog-te-gadget {{ font-family:inherit !important; font-size:12px !important; }}
-.goog-te-gadget .goog-te-combo {{ padding:7px; border:1px solid #dce9df; border-radius:8px; max-width:190px; }}
-body.dark-mode {{ background:#080d0a !important; color:#e6f3e9 !important; }}
-body.dark-mode .hero, body.dark-mode .stat-card, body.dark-mode .room-card, body.dark-mode .chart-card, body.dark-mode .table-card, body.dark-mode .floor-button, body.dark-mode .translate-panel {{ background:#111b15 !important; color:#e8f5ec !important; border-color:#244431 !important; box-shadow:0 12px 32px rgba(0,0,0,.25); }}
-body.dark-mode .hero {{ background:linear-gradient(120deg,#101b14,#14291c) !important; }}
-body.dark-mode .hero p, body.dark-mode .page-header p, body.dark-mode .section-title p, body.dark-mode .chart-card p, body.dark-mode .stat-label, body.dark-mode .room-card .location, body.dark-mode .room-consumption small {{ color:#9eb5a5 !important; }}
-body.dark-mode .stat-value, body.dark-mode .chart-card h3, body.dark-mode .section-title h2, body.dark-mode .page-header h1, body.dark-mode .room-card h3 {{ color:#e8f5ec !important; }}
-body.dark-mode th {{ color:#a9c2b1 !important; border-color:#294333 !important; }}
-body.dark-mode td {{ border-color:#20372a !important; color:#dcebe1; }}
-body.dark-mode .room-consumption {{ border-color:#263d2e !important; }}
-body.dark-mode .floor-button {{ color:#e8f5ec !important; }}
-body.dark-mode .floor-button:hover, body.dark-mode .floor-button.selected {{ background:#173d29 !important; border-color:#35a866 !important; }}
-body.dark-mode .floor-badge {{ background:#214b32 !important; color:#baf2ce !important; }}
-body.dark-mode .building-visual {{ background:linear-gradient(150deg,#071b10,#123d25) !important; }}
-body.dark-mode .page-header .tag {{ background:#173d29 !important; color:#a8efbf !important; }}
-body.dark-mode .stat-icon.green, body.dark-mode .room-icon {{ background:#183d28 !important; color:#9cebb5 !important; }}
-body.dark-mode .toolbar-button {{ background:#14251a; color:#dff5e6; border-color:#2c5238; }}
-body.dark-mode footer {{ color:#829b8b !important; }}
-@media(max-width:900px) {{ .top-toolbar {{ margin:12px 12px 0; justify-content:flex-end; flex-wrap:wrap; }} }}
-
 /* ============================================================
    NOUVELLE INTERFACE : SIDEBAR VERTICALE
 ============================================================ */
@@ -1331,11 +1337,6 @@ footer {{ margin-left: 280px; padding: 20px; text-align: center; color: #738277;
 .building-visual {{ background:linear-gradient(150deg,#123f2d,#1d6946); color:white; border-radius:24px; padding:25px; box-shadow:0 15px 35px rgba(16,61,43,.15); }}
 .building-visual h2 {{ margin-bottom:8px; }}
 .building-svg {{ width:100%; max-height:420px; margin-top:12px; }}
-.building-equipments {{ margin-top:12px; padding:10px 0 0 16px; border-top:1px solid #e6eee8; font-size:11px; }}
-.building-equipments li {{ margin:5px 0; }}
-.building-equipments small {{ color:#849087; }}
-body.dark-mode .building-equipments {{ border-color:#294333 !important; }}
-body.dark-mode .building-equipments small {{ color:#9eb5a5 !important; }}
 .floor-list {{ display:grid; gap:10px; margin-top:18px; }}
 .floor-button {{ display:flex; justify-content:space-between; align-items:center; gap:12px; width:100%; border:1px solid #dce9df; background:white; color:#163c2a; padding:16px 18px; border-radius:16px; text-decoration:none; font-weight:750; transition:.2s; }}
 .floor-button:hover, .floor-button.selected {{ border-color:#238653; background:#eaf8ef; transform:translateX(3px); }}
@@ -1349,6 +1350,189 @@ body.dark-mode .building-equipments small {{ color:#9eb5a5 !important; }}
  .container {{ margin:20px 12px 40px; }} footer {{ margin-left:0; }}
  .building-layout {{ grid-template-columns:1fr; }}
 }}
+
+/* BATIMENT 3D */
+.building-3d{{width:100%;height:390px;border-radius:18px;overflow:hidden;background:#123f2d;cursor:grab}}.building-3d:active{{cursor:grabbing}}.building-3d canvas{{display:block;width:100%;height:100%}}.three-loading{{padding:35px;color:#d1ead9}}.three-help{{font-size:11px;color:#c7e8d1;margin-top:10px}}
+/* BARRE D'OUTILS ET COMPTES */
+.top-toolbar{{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:0 0 24px;padding:15px 18px;background:rgba(255,255,255,.92);border:1px solid #e1ebe4;border-radius:18px;box-shadow:0 8px 25px rgba(20,40,25,.05)}}
+.toolbar-left{{display:flex;flex-direction:column;gap:3px}}.toolbar-left strong{{font-size:18px}}.toolbar-kicker{{font-size:9px;letter-spacing:1.5px;color:#21814b;font-weight:900}}
+.toolbar-actions{{display:flex;align-items:center;gap:8px;flex-wrap:wrap}}.toolbar-button{{border:1px solid #dce9df;background:#f7fbf8;color:#16452e;padding:10px 13px;border-radius:11px;font-weight:800;font-size:12px;text-decoration:none;cursor:pointer;font-family:inherit}}.signup-link{{background:#168449;color:white;border-color:#168449}}.logout-link{{color:#a33;background:#fff8f8;border-color:#f1dada}}.language-select{{min-width:66px}}
+.translate-hidden{{display:none!important}}
+.auth-wrap{{max-width:520px;margin:35px auto;background:white;border:1px solid #e1ebe4;border-radius:24px;padding:30px;box-shadow:0 15px 40px rgba(20,40,25,.07)}}.auth-wrap h1{{margin-bottom:8px}}.auth-wrap p{{color:#718078;margin-bottom:22px}}.auth-form{{display:grid;gap:14px}}.auth-form label{{font-size:12px;font-weight:800;color:#315640}}.auth-form input{{width:100%;padding:13px;border:1px solid #dce9df;border-radius:11px;margin-top:6px;font:inherit}}.auth-form button{{border:0;background:#168449;color:white;padding:14px;border-radius:12px;font-weight:900;cursor:pointer}}.auth-message{{padding:12px;border-radius:10px;background:#fff4e5;color:#86520b;margin:12px 0;font-size:13px}}
+/* THEME NOIR + VERT : couvre toutes les pages et tableaux */
+body.dark-mode{{background:#070b08!important;color:#e7f4ea!important}}
+body.dark-mode .container,body.dark-mode main{{color:#e7f4ea}}
+body.dark-mode .top-toolbar,body.dark-mode .hero,body.dark-mode .stat-card,body.dark-mode .room-card,body.dark-mode .chart-card,body.dark-mode .table-card,body.dark-mode .floor-button,body.dark-mode .auth-wrap,body.dark-mode .info-panel,body.dark-mode .module,body.dark-mode .translate-panel{{background:#101a13!important;color:#e7f4ea!important;border-color:#244631!important}}
+body.dark-mode .hero{{background:linear-gradient(120deg,#0c1710,#14271b)!important}}
+body.dark-mode h1,body.dark-mode h2,body.dark-mode h3,body.dark-mode h4,body.dark-mode .stat-value,body.dark-mode .room-card h3,body.dark-mode .chart-card h3,body.dark-mode .section-title h2,body.dark-mode .toolbar-left strong{{color:#e7f4ea!important}}
+body.dark-mode p,body.dark-mode small,body.dark-mode .page-header p,body.dark-mode .section-title p,body.dark-mode .stat-label,body.dark-mode .room-card .location,body.dark-mode .chart-card p{{color:#a9c4b1!important}}
+body.dark-mode td,body.dark-mode th{{color:#dcebe0!important;border-color:#294333!important}}
+body.dark-mode input,body.dark-mode select{{background:#0b130e!important;color:#e7f4ea!important;border-color:#31543c!important}}
+body.dark-mode .toolbar-button{{background:#14251a;color:#dff5e6;border-color:#31543c}}
+body.dark-mode .signup-link{{background:#168449!important;color:white!important}}
+body.dark-mode .room-consumption{{border-color:#294333!important}}
+body.dark-mode .floor-button:hover,body.dark-mode .floor-button.selected{{background:#173d29!important;border-color:#35a866!important}}
+body.dark-mode .building-visual{{background:linear-gradient(150deg,#071b10,#123d25)!important}}
+@media(max-width:800px){{.top-toolbar{{align-items:flex-start;flex-direction:column}}.toolbar-actions{{width:100%}}.toolbar-button{{flex:1;text-align:center}}.auth-wrap{{padding:22px}}}}
+
+
+
+/* ============================================================
+   DESIGN SYSTEM VERT-BLEU + CARTES FLOTTANTES
+============================================================ */
+:root {{
+  --sem-accent: #168b83;
+  --sem-accent-strong: #0f766e;
+  --sem-accent-soft: #e4f5f2;
+  --sem-ink: #153b37;
+  --sem-muted: #718985;
+  --sem-line: #dcebe8;
+  --sem-surface: #ffffff;
+  --sem-bg: #f2f8f7;
+}}
+body {{
+  background:
+    radial-gradient(circle at 82% 8%, rgba(22,139,131,.11), transparent 27%),
+    radial-gradient(circle at 12% 86%, rgba(72,175,154,.08), transparent 25%),
+    var(--sem-bg) !important;
+  color: var(--sem-ink);
+}}
+.navbar {{
+  background: linear-gradient(165deg, #103d3a 0%, #0d514b 55%, #12645a 100%) !important;
+  border: 1px solid rgba(120,220,202,.18) !important;
+  box-shadow: 0 22px 60px rgba(11,67,62,.22) !important;
+}}
+.logo-icon {{
+  background: linear-gradient(135deg, #39b8a5, #168b83) !important;
+  color: #fff !important;
+  letter-spacing: -1px;
+  font-size: 13px !important;
+  font-weight: 950;
+}}
+.navbar .logo span {{ color: #9ce6d8 !important; }}
+.menu a {{ color: #d1e9e4 !important; }}
+.menu a:hover {{ background: rgba(143,232,214,.13) !important; color: #fff !important; }}
+.menu a.active {{ background: linear-gradient(110deg,#e5fbf5,#c9f2e8) !important; color: #0e5149 !important; }}
+.nav-mark {{
+  width: 30px; height: 30px; flex: 0 0 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 9px; font-size: 9px; letter-spacing: .5px;
+  font-weight: 900; color: #a8ded3; background: rgba(255,255,255,.09);
+}}
+.menu a.active .nav-mark {{ color: #0f766e; background: rgba(22,139,131,.12); }}
+.clock-container {{ background: rgba(255,255,255,.10) !important; border: 1px solid rgba(255,255,255,.10); }}
+.container {{ padding-bottom: 80px; }}
+.top-toolbar {{
+  background: rgba(255,255,255,.78) !important;
+  border-color: var(--sem-line) !important;
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 34px rgba(17,74,68,.07) !important;
+}}
+.toolbar-kicker, .page-header h1 span {{ color: var(--sem-accent) !important; }}
+.toolbar-button {{ border-color: #d3e8e3 !important; color: #14534c !important; background: #f7fcfb !important; }}
+.signup-link, .auth-form button {{ background: linear-gradient(135deg,#168b83,#26a997) !important; color: #fff !important; border-color: transparent !important; }}
+.hero {{
+  background: linear-gradient(118deg,#ffffff 0%,#e8f7f4 58%,#d9f1eb 100%) !important;
+  border-color: #d7ebe6 !important;
+  box-shadow: 0 26px 70px rgba(14,95,85,.10) !important;
+}}
+.hero h1 span {{ color: var(--sem-accent) !important; }}
+.hero-status, .page-header .tag {{ background: var(--sem-accent-soft) !important; color: var(--sem-accent-strong) !important; }}
+.hero-core {{ background: linear-gradient(145deg,#28a995,#0f766e) !important; }}
+.stat-card, .room-card, .chart-card, .table-card, .module, .floor-button, .auth-wrap {{
+  border-color: var(--sem-line) !important;
+  box-shadow: 0 13px 34px rgba(18,82,75,.065) !important;
+}}
+.stat-card, .room-card, .chart-card, .table-card, .module, .floor-button {{
+  animation: sem-card-drift 7s ease-in-out infinite;
+  will-change: transform;
+}}
+.stat-card:nth-child(2n), .room-card:nth-child(2n), .module:nth-child(2n) {{ animation-delay: -2.8s; }}
+.stat-card:nth-child(3n), .room-card:nth-child(3n) {{ animation-delay: -4.6s; }}
+.stat-card:hover, .room-card:hover, .chart-card:hover, .table-card:hover, .module:hover, .floor-button:hover {{
+  transform: translateY(-9px) scale(1.012) !important;
+  box-shadow: 0 25px 48px rgba(14,95,85,.15) !important;
+  border-color: rgba(22,139,131,.35) !important;
+}}
+.room-icon, .stat-icon.green {{ background: #e2f5f1 !important; color: #11796f !important; }}
+.room-consumption strong, .status-normal {{ color: #11796f !important; }}
+.status-normal {{ background: #e3f6f1 !important; }}
+.building-visual {{ background: linear-gradient(145deg,#103f3b,#16786d) !important; }}
+.floor-button:hover, .floor-button.selected {{ border-color: #38a99a !important; background: #e5f6f2 !important; }}
+
+@keyframes sem-card-drift {{
+  0%, 100% {{ transform: translateY(0); }}
+  50% {{ transform: translateY(-4px); }}
+}}
+
+/* Carte d'information flottante partagée par toutes les pages */
+.floating-insight {{
+  position: fixed; right: 26px; bottom: 24px; z-index: 80;
+  width: 258px; padding: 16px 17px 13px;
+  border: 1px solid rgba(255,255,255,.72); border-radius: 19px;
+  color: #eafbf7;
+  background: linear-gradient(145deg,rgba(13,66,61,.96),rgba(17,112,100,.94));
+  box-shadow: 0 20px 55px rgba(10,70,64,.24), inset 0 1px 0 rgba(255,255,255,.14);
+  backdrop-filter: blur(18px);
+  animation: sem-float 5.5s ease-in-out infinite;
+  transition: transform .3s ease, box-shadow .3s ease;
+}}
+.floating-insight:hover {{ transform: translateY(-10px) rotate(-.4deg) scale(1.025); box-shadow: 0 28px 65px rgba(10,70,64,.32); }}
+.floating-insight-head, .floating-insight-foot {{ display:flex; align-items:center; justify-content:space-between; gap:8px; }}
+.floating-insight-head {{ color:#a9e8dc; font-size:8px; font-weight:900; letter-spacing:1.35px; }}
+.floating-live-dot {{ width:7px; height:7px; border-radius:50%; background:#70e3b7; box-shadow:0 0 0 5px rgba(112,227,183,.13); margin-right:1px; }}
+.floating-pulse {{ margin-left:auto; padding:4px 6px; border-radius:6px; background:rgba(112,227,183,.15); color:#9af0d0; font-size:8px; letter-spacing:.8px; }}
+.floating-insight > strong {{ display:block; margin-top:13px; color:#fff; font-size:14px; letter-spacing:-.2px; }}
+.floating-insight p {{ margin-top:5px; color:#c1e4dc; font-size:10px; line-height:1.55; }}
+.floating-insight-foot {{ border-top:1px solid rgba(255,255,255,.13); margin-top:12px; padding-top:9px; color:#9bcfc4; font-size:7px; font-weight:800; letter-spacing:1px; }}
+.floating-clock {{ color:#fff; font-size:10px; font-variant-numeric:tabular-nums; letter-spacing:.5px; }}
+@keyframes sem-float {{ 0%,100% {{ transform:translateY(0); }} 50% {{ transform:translateY(-7px); }} }}
+
+/* Mode sombre complet : surfaces, textes, formulaires, tableaux et composants bâtiment */
+body.dark-mode {{
+  --sem-bg: #071311; --sem-surface: #10201e; --sem-ink: #e2f4ef;
+  --sem-muted: #a0bdb6; --sem-line: #24433e; --sem-accent-soft: #153b36;
+  background: radial-gradient(circle at 80% 5%,rgba(24,139,126,.13),transparent 28%),#071311 !important;
+  color: #e2f4ef !important;
+}}
+body.dark-mode .top-toolbar, body.dark-mode .hero, body.dark-mode .stat-card,
+body.dark-mode .room-card, body.dark-mode .chart-card, body.dark-mode .table-card,
+body.dark-mode .module, body.dark-mode .floor-button, body.dark-mode .auth-wrap,
+body.dark-mode .panel, body.dark-mode .comparison-card {{
+  background: #10201e !important; color: #e2f4ef !important; border-color: #24433e !important;
+}}
+body.dark-mode .hero {{ background:linear-gradient(120deg,#0d211e,#12312c) !important; }}
+body.dark-mode h1, body.dark-mode h2, body.dark-mode h3, body.dark-mode h4,
+body.dark-mode .stat-value, body.dark-mode .room-card h3, body.dark-mode .toolbar-left strong,
+body.dark-mode .section-title h2 {{ color:#e8f7f2 !important; }}
+body.dark-mode p, body.dark-mode small, body.dark-mode .page-header p,
+body.dark-mode .section-title p, body.dark-mode .stat-label,
+body.dark-mode .room-card .location, body.dark-mode .chart-card p {{ color:#a8c5bd !important; }}
+body.dark-mode td, body.dark-mode th {{ color:#d8eee7 !important; border-color:#294943 !important; }}
+body.dark-mode input, body.dark-mode select, body.dark-mode textarea {{
+  background:#0a1916 !important; color:#e2f4ef !important; border-color:#31574f !important;
+}}
+body.dark-mode .toolbar-button {{ background:#142a26 !important; color:#dff5ed !important; border-color:#31574f !important; }}
+body.dark-mode .room-consumption {{ border-color:#294943 !important; }}
+body.dark-mode .floor-button:hover, body.dark-mode .floor-button.selected {{ background:#173c35 !important; border-color:#3ba994 !important; }}
+body.dark-mode .building-visual {{ background:linear-gradient(145deg,#09201c,#10473e) !important; }}
+body.dark-mode .floating-insight {{ background:linear-gradient(145deg,rgba(5,25,23,.97),rgba(10,65,58,.97)); border-color:#31574f; }}
+body.dark-mode .auth-form label {{ color:#c6e4db !important; }}
+body.dark-mode footer {{ color:#91aaa2 !important; }}
+
+@media(max-width:900px) {{
+  .floating-insight {{ right:14px; bottom:14px; width:220px; }}
+  .container {{ padding-bottom:120px; }}
+}}
+@media(max-width:600px) {{
+  .floating-insight {{ width:calc(100% - 28px); right:14px; bottom:12px; padding:12px 14px; }}
+  .floating-insight p {{ max-width:90%; }}
+  .container {{ padding-bottom:145px; }}
+}}
+@media(prefers-reduced-motion:reduce) {{
+  .floating-insight, .stat-card, .room-card, .chart-card, .table-card, .module, .floor-button {{ animation:none !important; transition:none !important; }}
+}}
+
 </style>
 
 </head>
@@ -1363,32 +1547,41 @@ body.dark-mode .building-equipments small {{ color:#9eb5a5 !important; }}
 
 <nav class="navbar">
     <a href="/" class="logo">
-        <div class="logo-icon">⚡</div>
+        <div class="logo-icon">SE</div>
         <span style="color:#fff">Smart <span>Energy</span><br>Monitor</span>
     </a>
     <div class="menu">
-        <a href="/" class="{"active" if active == "home" else ""}"><span>▦</span> Accueil</a>
-        <a href="/batiment" class="{"active" if active == "batiment" else ""}"><span>▤</span> Bâtiment</a>
-        <a href="/historique" class="{"active" if active == "historique" else ""}"><span>⌁</span> Historique</a>
-        <a href="/comparaisons" class="{"active" if active == "comparaisons" else ""}"><span>▥</span> Comparaisons</a>
-        <a href="/alertes" class="{"active" if active == "alertes" else ""}"><span>♧</span> Alertes</a>
-        <a href="/optimisations" class="{"active" if active == "optimisations" else ""}"><span>✳</span> Optimisations</a>
+        <a href="/" class="{"active" if active == "home" else ""}"><span class="nav-mark">01</span> Accueil</a>
+        <a href="/batiment" class="{"active" if active == "batiment" else ""}"><span class="nav-mark">02</span> Bâtiment</a>
+        <a href="/historique" class="{"active" if active == "historique" else ""}"><span class="nav-mark">03</span> Historique</a>
+        <a href="/comparaisons" class="{"active" if active == "comparaisons" else ""}"><span class="nav-mark">04</span> Comparaisons</a>
+        <a href="/alertes" class="{"active" if active == "alertes" else ""}"><span class="nav-mark">05</span> Alertes</a>
+        <a href="/optimisations" class="{"active" if active == "optimisations" else ""}"><span class="nav-mark">06</span> Optimisations</a>
     </div>
     <div class="clock-container"><div class="live-dot"></div><div><div id="clock" class="clock">--:--:--</div><small style="color:#c5e6d1">Système en direct</small></div></div>
 </nav>
 
-<div class="top-toolbar">
-  <button class="toolbar-button" id="themeToggle" type="button">◐ Mode sombre</button>
-  <button class="toolbar-button" id="translateToggle" type="button">文 Traduire</button>
-  <div class="translate-panel" id="translatePanel"><div id="google_translate_element"></div></div>
-</div>
 
 <!-- ========================================================
      CONTENU
 ========================================================= -->
 
 <main class="container">
-
+<div class="top-toolbar">
+  <div class="toolbar-left"><span class="toolbar-kicker">ESPACE DE GESTION</span><strong>{title}</strong></div>
+  <div class="toolbar-actions">
+    <button class="toolbar-button" id="themeToggle" type="button">Mode sombre</button>
+    <select class="toolbar-button language-select" id="languageSelect" aria-label="Choisir la langue"><option value="fr">FR</option><option value="en">EN</option><option value="ar">AR</option><option value="so">SO</option><option value="es">ES</option><option value="zh-CN">中文</option></select>
+    {f'<a class="toolbar-button account-link" href="/compte">Mon compte</a><a class="toolbar-button logout-link" href="/deconnexion">Déconnexion</a>' if session.get('user_id') else '<a class="toolbar-button account-link" href="/connexion">Login</a><a class="toolbar-button signup-link" href="/inscription">Sign up</a>'}
+  </div>
+</div>
+<div id="google_translate_element" class="translate-hidden"></div>
+<aside class="floating-insight" aria-label="Carte de suivi de la page">
+  <div class="floating-insight-head"><span class="floating-live-dot"></span><span>SUIVI ÉNERGÉTIQUE</span><span class="floating-pulse">LIVE</span></div>
+  <strong>{title}</strong>
+  <p>{floating_note}</p>
+  <div class="floating-insight-foot"><span>SMART ENERGY MONITOR</span><span class="floating-clock" id="floatingClock">--:--</span></div>
+</aside>
 {content}
 
 </main>
@@ -1396,7 +1589,7 @@ body.dark-mode .building-equipments small {{ color:#9eb5a5 !important; }}
 
 <footer>
 
-    ⚡ Smart Energy Monitor
+    Smart Energy Monitor
     — Système intelligent de gestion de l'électricité
 
 </footer>
@@ -1421,52 +1614,31 @@ function updateClock() {{
     const secondes =
         String(now.getSeconds()).padStart(2,"0");
 
-    document.getElementById("clock").textContent =
-        heures + ":" + minutes + ":" + secondes;
+    const clock = document.getElementById("clock");
+    if (clock) clock.textContent = heures + ":" + minutes + ":" + secondes;
+    const floatingClock = document.getElementById("floatingClock");
+    if (floatingClock) floatingClock.textContent = heures + ":" + minutes;
 }}
 
 updateClock();
+
 setInterval(updateClock,1000);
 
-const themeToggle = document.getElementById("themeToggle");
-function applyTheme(mode) {{
-  document.body.classList.toggle("dark-mode", mode === "dark");
-  if (themeToggle) themeToggle.textContent = mode === "dark" ? "☀ Mode clair" : "◐ Mode sombre";
-  if (window.Chart) {{
-    Chart.defaults.color = mode === "dark" ? "#d7e9dc" : "#66766b";
-    Chart.defaults.borderColor = mode === "dark" ? "#294333" : "#e4ece6";
-    Chart.defaults.plugins.legend.labels.color = mode === "dark" ? "#d7e9dc" : "#66766b";
-    document.querySelectorAll("canvas").forEach(canvas => {{
-      const chart = Chart.getChart(canvas);
-      if (!chart) return;
-      if (chart.options.scales) Object.values(chart.options.scales).forEach(axis => {{
-        axis.ticks = axis.ticks || {{}};
-        axis.ticks.color = mode === "dark" ? "#c4d8ca" : "#66766b";
-        axis.grid = axis.grid || {{}};
-        axis.grid.color = mode === "dark" ? "rgba(160,205,174,.13)" : "rgba(80,110,90,.10)";
-      }});
-      chart.update("none");
-    }});
-  }}
-}}
-let savedTheme = "light";
-try {{ savedTheme = localStorage.getItem("energix-theme") || "light"; }} catch (e) {{}}
-applyTheme(savedTheme);
-if (themeToggle) themeToggle.addEventListener("click", () => {{
-  const next = document.body.classList.contains("dark-mode") ? "light" : "dark";
-  try {{ localStorage.setItem("energix-theme", next); }} catch (e) {{}}
-  applyTheme(next);
-}});
+</script>
 
-const translateToggle = document.getElementById("translateToggle");
-const translatePanel = document.getElementById("translatePanel");
-if (translateToggle && translatePanel) translateToggle.addEventListener("click", () => translatePanel.classList.toggle("open"));
-function googleTranslateElementInit() {{
-  if (window.google && google.translate) new google.translate.TranslateElement({{pageLanguage:"fr", includedLanguages:"en,ar,so,aa,fr,es,zh-CN,ja", autoDisplay:false}}, "google_translate_element");
-}}
+
+
+<script>
+(function(){{
+ const body=document.body, toggle=document.getElementById('themeToggle');
+ let mode='light'; try{{mode=localStorage.getItem('energix-theme')||'light'}}catch(e){{}}
+ function applyTheme(value){{body.classList.toggle('dark-mode',value==='dark');if(toggle)toggle.textContent=value==='dark'?'Mode clair':'Mode sombre';try{{localStorage.setItem('energix-theme',value)}}catch(e){{}} if(window.Chart){{Chart.defaults.color=value==='dark'?'#d7e9dc':'#66766b';Chart.defaults.borderColor=value==='dark'?'#294333':'#e4ece6';Chart.defaults.plugins.legend.labels.color=Chart.defaults.color;document.querySelectorAll('canvas').forEach(c=>{{const ch=Chart.getChart(c);if(ch){{Object.values(ch.options.scales||{{}}).forEach(a=>{{if(a.ticks)a.ticks.color=Chart.defaults.color;if(a.grid)a.grid.color=Chart.defaults.borderColor}});ch.update()}}}})}}}}
+ applyTheme(mode);if(toggle)toggle.addEventListener('click',()=>applyTheme(body.classList.contains('dark-mode')?'light':'dark'));
+ const lang=document.getElementById('languageSelect');if(lang)lang.addEventListener('change',()=>{{const value=lang.value;if(value==='fr'){{const frame=document.querySelector('.goog-te-combo');if(frame){{frame.value='fr';frame.dispatchEvent(new Event('change'))}}return}}const wait=()=>{{const combo=document.querySelector('.goog-te-combo');if(combo){{combo.value=value;combo.dispatchEvent(new Event('change'))}}else{{setTimeout(wait,400)}}}};wait()}});
+}})();
+function googleTranslateElementInit(){{if(window.google&&google.translate){{new google.translate.TranslateElement({{pageLanguage:'fr',includedLanguages:'en,ar,so,es,zh-CN',autoDisplay:false}},'google_translate_element')}}}}
 </script>
 <script src="https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit" defer></script>
-
 
 </body>
 
@@ -1602,11 +1774,11 @@ def home():
     # --------------------------------------------------------
 
     icones = {
-        "Salle informatique": "💻",
-        "Salle de cours": "📚",
-        "Laboratoire": "🔬",
-        "Bureau administratif": "🏢",
-        "Salle de réunion": "👥"
+        "Salle informatique": "INFO",
+        "Salle de cours": "COURS",
+        "Laboratoire": "LAB",
+        "Bureau administratif": "BUREAU",
+        "Salle de réunion": "ÉQUIPE"
     }
 
     # --------------------------------------------------------
@@ -1621,7 +1793,7 @@ def home():
 
         icone = icones.get(
             nom,
-            "🏢"
+            "BUREAU"
         )
 
         rooms_html += f"""
@@ -1701,7 +1873,7 @@ def home():
     <div class="hero-orbit"></div>
 
     <div class="hero-core">
-        ⚡
+        SE
     </div>
 
 </section>
@@ -1716,7 +1888,7 @@ def home():
         <div class="stat-top">
 
             <div class="stat-icon green">
-                ⚡
+                SE
             </div>
 
         </div>
@@ -1738,7 +1910,7 @@ def home():
         <div class="stat-top">
 
             <div class="stat-icon dark">
-                📡
+                SYSTÈME
             </div>
 
         </div>
@@ -1759,7 +1931,7 @@ def home():
         <div class="stat-top">
 
             <div class="stat-icon red">
-                🚨
+                ALERTE
             </div>
 
         </div>
@@ -1780,7 +1952,7 @@ def home():
         <div class="stat-top">
 
             <div class="stat-icon green">
-                🧠
+                ANALYSE
             </div>
 
         </div>
@@ -1965,7 +2137,7 @@ new Chart(document.getElementById("dailyEnergyChart"), {{
 <section class="section-title">
 
     <h2>
-        🏢 Espaces surveillés
+        BUREAU Espaces surveillés
     </h2>
 
     <p>
@@ -1992,7 +2164,7 @@ new Chart(document.getElementById("dailyEnergyChart"), {{
 <section class="section-title">
 
     <h2>
-        📡 Activité du système
+        SYSTÈME Activité du système
     </h2>
 
 </section>
@@ -2067,7 +2239,7 @@ new Chart(document.getElementById("dailyEnergyChart"), {{
        class="module module-history">
 
         <div class="module-icon">
-            📜
+            HISTORIQUE
         </div>
 
         <div>
@@ -2089,7 +2261,7 @@ new Chart(document.getElementById("dailyEnergyChart"), {{
        class="module module-analysis">
 
         <div class="module-icon">
-            📊
+            DONNÉES
         </div>
 
         <div>
@@ -2111,7 +2283,7 @@ new Chart(document.getElementById("dailyEnergyChart"), {{
        class="module module-alert">
 
         <div class="module-icon">
-            🚨
+            ALERTE
         </div>
 
         <div>
@@ -2133,7 +2305,7 @@ new Chart(document.getElementById("dailyEnergyChart"), {{
        class="module module-optimization">
 
         <div class="module-icon">
-            🧠
+            ANALYSE
         </div>
 
         <div>
@@ -2460,7 +2632,7 @@ def salle(salle_id):
 <section class="section-title">
 
     <h2>
-        📊 Analyse de la salle
+        DONNÉES Analyse de la salle
     </h2>
 
     <p>
@@ -2516,7 +2688,7 @@ def salle(salle_id):
 <section class="section-title">
 
     <h2>
-        🔌 Équipements
+        ÉQUIPEMENTS Équipements
     </h2>
 
 </section>
@@ -2679,64 +2851,57 @@ def batiment(etage=0):
         ORDER BY s.id
     """)
     toutes_salles = cur.fetchall()
-    # Liste réelle des équipements associés à chaque salle.
-    cur.execute("SELECT salle_id, nom, type, etat FROM equipements ORDER BY salle_id, id")
-    equipements_par_salle = {}
-    for eq in cur.fetchall():
-        equipements_par_salle.setdefault(eq["salle_id"], []).append(eq)
-
     db.close()
 
+    etage = max(0, min(4, etage))
     noms_etages = {1: "Rez-de-chaussée", 2: "1er étage", 3: "2e étage", 4: "3e étage"}
-    import re
-    def niveau_depuis_localisation(localisation):
-        texte = (localisation or "").lower()
-        if re.search(r"rez[- ]?de[- ]?chaussée|\brdc\b", texte): return 1
-        if re.search(r"1er|premier|étage 1|etage 1", texte): return 2
-        if re.search(r"2e|2ème|deuxième|étage 2|etage 2", texte): return 3
-        if re.search(r"3e|3ème|troisième|étage 3|etage 3", texte): return 4
-        return None
-    if etage in noms_etages:
-        salles_etage = [s for s in toutes_salles if niveau_depuis_localisation(s["localisation"]) == etage]
-        titre_etage = noms_etages[etage]
-    else:
-        salles_etage = toutes_salles
-        titre_etage = "Toutes les salles"
+    # Les salles déjà présentes dans la base sont réparties sans modifier la base.
+    salles_etage = toutes_salles if etage == 0 else [s for i, s in enumerate(toutes_salles) if i % 4 == etage - 1]
     if not salles_etage:
         salles_html = '<div class="info-panel"><h3>Aucune salle enregistrée à cet étage</h3><p>Ajoutez les salles dans votre base de données pour les afficher ici. Aucune donnée n’a été créée ou modifiée automatiquement.</p></div>'
     else:
         salles_html = '<div class="grid-2">'
         for salle in salles_etage:
-            equipements_html = "".join(
-                f"<li>{eq['nom']} <small>{eq['type'] or 'Type non précisé'} · {eq['etat'] or 'État non précisé'}</small></li>"
-                for eq in equipements_par_salle.get(salle["id"], [])
-            ) or "<li>Aucun équipement enregistré</li>"
             salles_html += f"""<a class="room-card" href="/salle/{salle["id"]}">
               <div class="room-top"><div class="room-icon"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h2m2 0h2M9 11h2m2 0h2M9 15h2m2 0h2M10 21v-3h4v3"/></svg></div><span class="status-normal">SURVEILLÉE</span></div>
-              <h3>{salle["nom"]}</h3><div class="location">{salle["localisation"] or "Localisation non renseignée"}</div>
+              <h3>{salle["nom"]}</h3><div class="location">{salle["localisation"] or noms_etages.get(etage, "Étage non précisé")}</div>
               <div class="room-consumption"><small>Consommation enregistrée</small><strong>{safe_float(salle["energie"]):.3f} kWh</strong></div>
-              <small style="color:#718078">{salle["nb_equipements"]} équipement(s)</small>
-              <ul class="building-equipments">{equipements_html}</ul></a>"""
+              <small style="color:#718078">{salle["nb_equipements"]} équipement(s)</small></a>"""
         salles_html += '</div>'
 
-    floors = f'<a class="floor-button{" selected" if etage == 0 else ""}" href="/batiment"><span>▦ Toutes les salles</span><span class="floor-badge">{len(toutes_salles)}</span></a>'
+    floors = '<a class="floor-button" href="/batiment"><span>▦ Toutes les salles</span><span class="floor-badge">' + str(len(toutes_salles)) + '</span></a>'
     for numero, nom in noms_etages.items():
         selected = ' selected' if numero == etage else ''
-        count = sum(1 for s in toutes_salles if niveau_depuis_localisation(s["localisation"]) == numero)
-        floors += f'<a class="floor-button{selected}" href="/batiment/{numero}"><span><span style="color:#21814b;margin-right:10px">▦</span>{nom}</span><span class="floor-badge">{count} salle(s)</span></a>'
+        floors += f'<a class="floor-button{selected}" href="/batiment/{numero}"><span><span class="floor-mark" style="color:#21814b;margin-right:10px">NIVEAU</span>{nom}</span><span class="floor-badge">Étage {numero}</span></a>'
 
-    building_svg = """<svg class="building-svg" viewBox="0 0 320 360" role="img" aria-label="Illustration du bâtiment à quatre niveaux">
-      <defs><linearGradient id="facade" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4fff7"/><stop offset="1" stop-color="#b8e4c7"/></linearGradient></defs>
-      <path d="M45 83 L160 24 L275 83" fill="none" stroke="#c9f5d8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-      <rect x="52" y="80" width="216" height="245" rx="7" fill="url(#facade)" stroke="#8bc9a0" stroke-width="3"/>
-      <rect x="140" y="270" width="40" height="55" rx="3" fill="#19563a"/>
-      <g fill="#1f8050" stroke="#17643e" stroke-width="2"><rect x="73" y="99" width="42" height="31" rx="3"/><rect x="137" y="99" width="42" height="31" rx="3"/><rect x="201" y="99" width="42" height="31" rx="3"/><rect x="73" y="157" width="42" height="31" rx="3"/><rect x="137" y="157" width="42" height="31" rx="3"/><rect x="201" y="157" width="42" height="31" rx="3"/><rect x="73" y="215" width="42" height="31" rx="3"/><rect x="137" y="215" width="42" height="31" rx="3"/></g>
-      <g fill="#d9f8e4"><path d="M77 103h34v22H77zM141 103h34v22h-34zM205 103h34v22h-34zM77 161h34v22H77zM141 161h34v22h-34zM205 161h34v22h-34zM77 219h34v22H77zM141 219h34v22h-34z"/></g>
-      <path d="M35 325h250" stroke="#c9f5d8" stroke-width="6" stroke-linecap="round"/><circle cx="260" cy="47" r="17" fill="#b5edc8"/><path d="M260 36v22M249 47h22" stroke="#19563a" stroke-width="3" stroke-linecap="round"/>
-    </svg>"""
-    content = f"""<div class="page-header"><div class="tag">GESTION DES ESPACES</div><h1>Bâtiment <span style="color:#21814b">intelligent</span></h1><p>Explorez les niveaux et consultez les salles, équipements et consommations enregistrés.</p></div>
-    <div class="building-layout"><section class="building-visual"><div style="font-size:11px;letter-spacing:2px;color:#b9e9c9;font-weight:800">SMART ENERGY MONITOR</div><h2>Votre établissement</h2><p style="color:#d1ead9;line-height:1.6">Consultez les salles, leur localisation, leurs équipements et leurs consommations enregistrées.</p>{building_svg}<div style="display:flex;justify-content:space-between;border-top:1px solid #ffffff30;padding-top:16px"><span style="color:#d1ead9">Salles enregistrées</span><strong>{len(toutes_salles)}</strong></div></section>
-    <section><div class="section-title"><h2>Choisir un étage</h2><p>Navigation par niveau</p></div><div class="floor-list">{floors}</div><div class="section-title" style="margin-top:25px"><h2>{titre_etage}</h2><p>{len(salles_etage)} salle(s) affichée(s)</p></div>{salles_html}</section></div>"""
+    building_svg = """<div id="building3d" class="building-3d" aria-label="Bâtiment interactif en trois dimensions"><div class="three-loading">Chargement du bâtiment 3D…</div></div>
+    <div class="three-help">Glissez pour tourner · Molette pour zoomer · Cliquez sur un étage</div>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script>
+    (function(){
+      const host=document.getElementById('building3d'); if(!host)return;if(!window.THREE){host.innerHTML="<div class=\"three-loading\">Le moteur 3D n’a pas pu être chargé. Vérifiez votre connexion Internet puis rechargez la page.</div>";return;}
+      host.innerHTML=''; const scene=new THREE.Scene();scene.background=new THREE.Color(0x123f2d);
+      const camera=new THREE.PerspectiveCamera(42,host.clientWidth/390,.1,100);camera.position.set(8,7,10);camera.lookAt(0,2,0);
+      const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(host.clientWidth,390);renderer.shadowMap.enabled=true;host.appendChild(renderer.domElement);
+      scene.add(new THREE.AmbientLight(0xffffff,.75));const light=new THREE.DirectionalLight(0xffffff,2);light.position.set(5,9,6);scene.add(light);
+      const building=new THREE.Group();scene.add(building);
+      const mat=new THREE.MeshStandardMaterial({color:0xb9e5c7,roughness:.55});const edge=new THREE.MeshStandardMaterial({color:0x17643e,roughness:.45});
+      const floorMeshes=[];
+      for(let i=0;i<4;i++){const floor=new THREE.Mesh(new THREE.BoxGeometry(4.2,.85,3.2),new THREE.MeshStandardMaterial({color:0xb9e5c7,roughness:.6}));floor.position.y=i*1.05+.55;floor.userData.floor=i+1;building.add(floor);floorMeshes.push(floor);
+        const slab=new THREE.Mesh(new THREE.BoxGeometry(4.35,.12,3.35),edge);slab.position.y=i*1.05+.08;building.add(slab);
+        for(let w=0;w<3;w++){const win=new THREE.Mesh(new THREE.BoxGeometry(.65,.42,.035),new THREE.MeshStandardMaterial({color:0x238653,metalness:.15,roughness:.25,emissive:0x092a18}));win.position.set(-1.35+w*1.35,i*1.05+.58,1.62);building.add(win)}
+      }
+      const roof=new THREE.Mesh(new THREE.ConeGeometry(2.8,1.3,4),new THREE.MeshStandardMaterial({color:0x17643e}));roof.rotation.y=Math.PI/4;roof.position.y=4.9;building.add(roof);
+      const ground=new THREE.Mesh(new THREE.BoxGeometry(7,.15,5.5),new THREE.MeshStandardMaterial({color:0x28563c}));ground.position.y=-.08;scene.add(ground);
+      let dragging=false,lastX=0,lastY=0,rotY=-.45,rotX=-.15;host.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;host.setPointerCapture(e.pointerId)});host.addEventListener('pointerup',()=>dragging=false);host.addEventListener('pointermove',e=>{if(!dragging)return;rotY+=(e.clientX-lastX)*.008;rotX+=(e.clientY-lastY)*.004;rotX=Math.max(-.5,Math.min(.35,rotX));lastX=e.clientX;lastY=e.clientY});host.addEventListener('wheel',e=>{camera.position.multiplyScalar(e.deltaY>0?1.08:.92);camera.position.clampLength(7,20);},{passive:true});
+      const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();host.addEventListener('click',e=>{const r=host.getBoundingClientRect();mouse.x=((e.clientX-r.left)/r.width)*2-1;mouse.y=-((e.clientY-r.top)/r.height)*2+1;ray.setFromCamera(mouse,camera);const hit=ray.intersectObjects(floorMeshes);if(hit.length){const f=hit[0].object.userData.floor;window.location.href='/batiment/'+f}});
+      function animate(){requestAnimationFrame(animate);building.rotation.y=rotY;building.rotation.x=rotX;renderer.render(scene,camera)}animate();window.addEventListener('resize',()=>{camera.aspect=host.clientWidth/390;camera.updateProjectionMatrix();renderer.setSize(host.clientWidth,390)});
+    })();
+    </script>"""
+    etage_label = 'Tous les étages' if etage == 0 else noms_etages[etage]
+    content = f"""<div class="page-header"><div class="tag">GESTION DES ESPACES</div><h1>Bâtiment <span style="color:#21814b">intelligent</span></h1><p>Explorez le bâtiment en 3D et consultez les salles, équipements et consommations enregistrés.</p></div>
+    <div class="building-layout"><section class="building-visual"><div style="font-size:11px;letter-spacing:2px;color:#b9e9c9;font-weight:800">SMART ENERGY MONITOR</div><h2>Votre établissement</h2><p style="color:#d1ead9;line-height:1.6">Sélectionnez un étage pour afficher les salles correspondantes.</p>{building_svg}<div style="display:flex;justify-content:space-between;border-top:1px solid #ffffff30;padding-top:16px"><span style="color:#d1ead9">Étages disponibles</span><strong>04</strong></div></section>
+    <section><div class="section-title"><h2>Choisir un étage</h2><p>Navigation par niveau</p></div><div class="floor-list">{floors}</div><div class="section-title" style="margin-top:25px"><h2>{etage_label}</h2><p>{len(salles_etage)} salle(s) trouvée(s) dans la base</p></div>{salles_html}</section></div>"""
     return page_template("Bâtiment", content, "batiment")
 
 
@@ -3381,7 +3546,7 @@ def alertes():
     <div class="stat-top">
 
         <div class="stat-icon red">
-            🚨
+            ALERTE
         </div>
 
     </div>
@@ -3549,7 +3714,7 @@ def optimisations():
     <div class="stat-card">
 
         <div class="stat-icon green">
-            🧠
+            ANALYSE
         </div>
 
         <div class="stat-label">
@@ -3566,7 +3731,7 @@ def optimisations():
     <div class="stat-card">
 
         <div class="stat-icon green">
-            ⚡
+            SE
         </div>
 
         <div class="stat-label">
@@ -3583,7 +3748,7 @@ def optimisations():
     <div class="stat-card">
 
         <div class="stat-icon dark">
-            📡
+            SYSTÈME
         </div>
 
         <div class="stat-label">
@@ -3651,6 +3816,69 @@ def optimisations():
     )
 
 
+
+# ============================================================
+# AUTHENTIFICATION ET ESPACE UTILISATEUR
+# ============================================================
+
+@app.route("/inscription", methods=["GET", "POST"])
+def inscription():
+    message = ""
+    if request.method == "POST":
+        nom = request.form.get("nom", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("mot_de_passe", "")
+        confirm = request.form.get("confirmation", "")
+        if not nom or not email or not password:
+            message = "Tous les champs sont obligatoires."
+        elif len(password) < 8:
+            message = "Le mot de passe doit contenir au moins 8 caractères."
+        elif password != confirm:
+            message = "Les deux mots de passe ne correspondent pas."
+        else:
+            try:
+                with sqlite3.connect(DATABASE) as db:
+                    cur = db.execute("INSERT INTO utilisateurs(nom,email,mot_de_passe) VALUES(?,?,?)", (nom,email,generate_password_hash(password)))
+                    user_id = cur.lastrowid
+                session.clear(); session["user_id"] = user_id; session["user_name"] = nom; session["user_email"] = email
+                return redirect(url_for("compte"))
+            except sqlite3.IntegrityError:
+                message = "Cette adresse e-mail possède déjà un compte."
+    content = f"""<section class="auth-wrap"><div class="page-header"><div class="tag">NOUVEAU COMPTE</div><h1>Créer un compte</h1><p>Rejoignez votre espace Smart Energy Monitor.</p></div>{f'<div class="auth-message">{message}</div>' if message else ''}<form class="auth-form" method="post"><label>Nom complet<input name="nom" autocomplete="name" required></label><label>Adresse e-mail<input name="email" type="email" autocomplete="email" required></label><label>Mot de passe<input name="mot_de_passe" type="password" minlength="8" autocomplete="new-password" required></label><label>Confirmer le mot de passe<input name="confirmation" type="password" minlength="8" autocomplete="new-password" required></label><button type="submit">Créer mon compte</button></form><p style="margin-top:18px">Déjà inscrit ? <a href="/connexion">Se connecter</a></p></section>"""
+    return page_template("Inscription", content, "home")
+
+
+@app.route("/connexion", methods=["GET", "POST"])
+def connexion():
+    message = ""
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("mot_de_passe", "")
+        with sqlite3.connect(DATABASE) as db:
+            db.row_factory = sqlite3.Row
+            user = db.execute("SELECT * FROM utilisateurs WHERE email=?", (email,)).fetchone()
+        if user and check_password_hash(user["mot_de_passe"], password):
+            session.clear(); session["user_id"] = user["id"]; session["user_name"] = user["nom"]; session["user_email"] = user["email"]
+            return redirect(url_for("compte"))
+        message = "Adresse e-mail ou mot de passe incorrect."
+    content = f"""<section class="auth-wrap"><div class="page-header"><div class="tag">ESPACE SÉCURISÉ</div><h1>Connexion</h1><p>Connectez-vous à votre compte.</p></div>{f'<div class="auth-message">{message}</div>' if message else ''}<form class="auth-form" method="post"><label>Adresse e-mail<input name="email" type="email" autocomplete="email" required></label><label>Mot de passe<input name="mot_de_passe" type="password" autocomplete="current-password" required></label><button type="submit">Se connecter</button></form><p style="margin-top:18px">Pas encore de compte ? <a href="/inscription">Créer un compte</a></p></section>"""
+    return page_template("Connexion", content, "home")
+
+
+@app.route("/compte")
+def compte():
+    if not session.get("user_id"):
+        return redirect(url_for("connexion"))
+    content = f"""<div class="page-header"><div class="tag">ESPACE PERSONNEL</div><h1>Mon compte</h1><p>Informations de votre profil utilisateur.</p></div><div class="grid-2"><div class="stat-card"><div class="stat-label">Nom</div><div class="stat-value">{session.get('user_name','Utilisateur')}</div></div><div class="stat-card"><div class="stat-label">Adresse e-mail</div><div style="font-weight:800;margin-top:10px">{session.get('user_email','')}</div></div></div><div style="margin-top:22px"><a class="toolbar-button logout-link" href="/deconnexion">Déconnexion</a></div>"""
+    return page_template("Mon compte", content, "home")
+
+
+@app.route("/deconnexion")
+def deconnexion():
+    session.clear()
+    return redirect(url_for("home"))
+
+
 # ============================================================
 # ERREUR 404
 # ============================================================
@@ -3671,10 +3899,13 @@ def page_not_found(error):
     <div>
 
         <div style="
-            font-size:80px;
+            font-size:22px;
+            font-weight:900;
+            letter-spacing:3px;
             margin-bottom:20px;
+            color:#168b83;
         ">
-            ⚡
+            SMART ENERGY
         </div>
 
         <h1 style="
@@ -3725,7 +3956,7 @@ if __name__ == "__main__":
 
     app.run(
         debug=True,
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=5000
     )
 
