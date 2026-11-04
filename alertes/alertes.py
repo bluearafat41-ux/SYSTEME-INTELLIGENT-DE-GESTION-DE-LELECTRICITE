@@ -1,13 +1,13 @@
-
 import sqlite3
-from datetime import datetime
+from pathlib import Path
+from datetime import datetime, timedelta
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATABASE = BASE_DIR / "database" / "database.db"
+FENETRE_ANALYSE_MINUTES = 10
+SEUIL_ANOMALIE = 1.20
 
-# ============================================================
-# PUISSANCE NORMALE DES ÉQUIPEMENTS
-# ============================================================
-
-puissances_normales = {
+PUISSANCES_NORMALES = {
     "Ordinateurs": 0.15,
     "Climatiseur": 1.50,
     "Ventilateurs": 0.08,
@@ -17,210 +17,91 @@ puissances_normales = {
     "Équipements de laboratoire": 1.00
 }
 
+def analyser_alertes():
+    connexion = sqlite3.connect(DATABASE, timeout=20)
+    try:
+        curseur = connexion.cursor()
+        maintenant = datetime.now()
+        debut = maintenant - timedelta(minutes=FENETRE_ANALYSE_MINUTES)
 
-# ============================================================
-# CONNEXION À LA BASE DE DONNÉES
-# ============================================================
-
-connexion = sqlite3.connect("database/database.db")
-curseur = connexion.cursor()
-
-
-# ============================================================
-# RÉCUPÉRATION DES MESURES
-# ============================================================
-
-curseur.execute("""
-    SELECT
-        consommations.id,
-        consommations.date_heure,
-        consommations.puissance,
-        equipements.id,
-        equipements.nom,
-        salles.id,
-        salles.nom
-    FROM consommations
-    JOIN equipements
-        ON consommations.equipement_id = equipements.id
-    JOIN salles
-        ON equipements.salle_id = salles.id
-    ORDER BY consommations.date_heure DESC
-""")
-
-mesures = curseur.fetchall()
-
-
-# ============================================================
-# TRAITEMENT DES MESURES
-# ============================================================
-
-nombre_alertes = 0
-
-for (
-    consommation_id,
-    date_heure,
-    puissance,
-    equipement_id,
-    equipement,
-    salle_id,
-    salle
-) in mesures:
-
-    # Récupération de la puissance normale
-    puissance_normale = puissances_normales.get(equipement)
-
-    # Si l'équipement n'est pas défini, on passe au suivant
-    if puissance_normale is None:
-        continue
-
-    # Calcul du seuil d'anomalie
-    seuil = puissance_normale * 1.20
-
-    # Vérification de l'anomalie
-    if puissance > seuil:
-
-        # Vérifier si cette alerte existe déjà
         curseur.execute("""
-            SELECT id
-            FROM alertes
-            WHERE salle_id = ?
-            AND equipement_id = ?
-            AND date_heure = ?
-        """, (
-            salle_id,
-            equipement_id,
-            date_heure
-        ))
+            SELECT
+                c.equipement_id,
+                e.salle_id,
+                e.nom,
+                s.nom,
+                c.date_heure,
+                c.puissance
+            FROM consommations c
+            JOIN equipements e ON e.id = c.equipement_id
+            JOIN salles s ON s.id = e.salle_id
+            WHERE c.date_heure >= ?
+            ORDER BY c.date_heure ASC
+        """, (debut.strftime("%Y-%m-%d %H:%M:%S"),))
+        mesures = curseur.fetchall()
 
-        alerte_existante = curseur.fetchone()
+        # On conserve seulement la mesure anormale la plus élevée
+        # de chaque équipement pendant cette fenêtre.
+        anomalies = {}
+        for equipement_id, salle_id, nom, salle, date_heure, puissance in mesures:
+            normale = PUISSANCES_NORMALES.get(nom)
+            if normale is None or puissance is None:
+                continue
+            seuil = normale * SEUIL_ANOMALIE
+            if float(puissance) > seuil:
+                ancienne = anomalies.get(equipement_id)
+                if ancienne is None or float(puissance) > float(ancienne[5]):
+                    anomalies[equipement_id] = (
+                        equipement_id, salle_id, nom, salle, date_heure, puissance, seuil
+                    )
 
-        # Création de l'alerte uniquement si elle n'existe pas
-        if alerte_existante is None:
+        nouvelles = 0
+        for equipement_id, salle_id, nom, salle, date_heure, puissance, seuil in anomalies.values():
+            # Une seule alerte ACTIVE par équipement et par type :
+            # les cycles suivants ne recréent pas le même événement en boucle.
+            curseur.execute("""
+                SELECT id FROM alertes
+                WHERE equipement_id = ?
+                  AND type = 'SURCONSOMMATION'
+                  AND UPPER(statut) = 'ACTIVE'
+                LIMIT 1
+            """, (equipement_id,))
+            if curseur.fetchone():
+                continue
 
+            niveau = "TRÈS ÉLEVÉ" if float(puissance) >= seuil * 1.5 else "ÉLEVÉ"
             message = (
-                f"Consommation anormale détectée pour "
-                f"{equipement} dans {salle}. "
-                f"Puissance mesurée : {puissance:.2f} kW. "
-                f"Seuil : {seuil:.2f} kW."
+                f"Surconsommation détectée dans {salle} : {nom}. "
+                f"Puissance mesurée : {float(puissance):.3f} kW ; "
+                f"seuil de détection : {seuil:.3f} kW."
             )
 
             curseur.execute("""
                 INSERT INTO alertes
-                (
-                    salle_id,
-                    equipement_id,
-                    type,
-                    message,
-                    niveau,
-                    date_heure,
-                    statut
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (salle_id, equipement_id, type, message, niveau, date_heure, statut)
+                VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE')
             """, (
                 salle_id,
                 equipement_id,
                 "SURCONSOMMATION",
                 message,
-                "ÉLEVÉ",
-                date_heure,
-                "ACTIVE"
+                niveau,
+                date_heure
             ))
+            nouvelles += 1
+            print(f"[ALERTE] Nouvelle alerte #{curseur.lastrowid} — {nom} / {salle}", flush=True)
 
-            nombre_alertes += 1
-
-
-# ============================================================
-# ENREGISTREMENT
-# ============================================================
-
-connexion.commit()
-
-
-# ============================================================
-# AFFICHAGE
-# ============================================================
-
-print()
-print("====================================================")
-print("              SYSTÈME D'ALERTES")
-print("====================================================")
-print()
-
-print("Date du traitement :", datetime.now())
-print()
-
-print("Mesures analysées :", len(mesures))
-print("Nouvelles alertes :", nombre_alertes)
-print()
-
-
-# ============================================================
-# AFFICHAGE DES ALERTES ACTIVES
-# ============================================================
-
-curseur.execute("""
-    SELECT
-        alertes.date_heure,
-        salles.nom,
-        equipements.nom,
-        alertes.type,
-        alertes.message,
-        alertes.niveau,
-        alertes.statut
-    FROM alertes
-    JOIN salles
-        ON alertes.salle_id = salles.id
-    LEFT JOIN equipements
-        ON alertes.equipement_id = equipements.id
-    WHERE alertes.statut = 'ACTIVE'
-    ORDER BY alertes.date_heure DESC
-""")
-
-alertes_actives = curseur.fetchall()
-
-
-print("----------------------------------------------------")
-print("ALERTES ACTIVES")
-print("----------------------------------------------------")
-
-if alertes_actives:
-
-    for (
-        date_heure,
-        salle,
-        equipement,
-        type_alerte,
-        message,
-        niveau,
-        statut
-    ) in alertes_actives:
-
-        print()
+        connexion.commit()
         print(
-            f"[{niveau}] "
-            f"{date_heure} | "
-            f"{salle} | "
-            f"{equipement}"
+            f"[ALERTES] {len(mesures)} mesures examinées sur {FENETRE_ANALYSE_MINUTES} min ; "
+            f"{len(anomalies)} équipement(s) anormal(aux) ; {nouvelles} nouvelle(s) alerte(s).",
+            flush=True
         )
+    except Exception:
+        connexion.rollback()
+        raise
+    finally:
+        connexion.close()
 
-        print("Type :", type_alerte)
-        print("Message :", message)
-        print("Statut :", statut)
-
-else:
-
-    print("Aucune alerte active.")
-
-
-print()
-print("====================================================")
-print("           FIN DU SYSTÈME D'ALERTES")
-print("====================================================")
-
-
-# ============================================================
-# FERMETURE
-# ============================================================
-
-connexion.close()
-
+if __name__ == "__main__":
+    analyser_alertes()

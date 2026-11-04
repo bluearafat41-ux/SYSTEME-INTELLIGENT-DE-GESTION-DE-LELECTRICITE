@@ -1,0 +1,3530 @@
+from flask import Flask, render_template_string, abort
+import sqlite3
+from pathlib import Path
+from datetime import datetime, timedelta
+import json
+
+app = Flask(__name__)
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+DATABASE = BASE_DIR / "database" / "database.db"
+
+
+# ============================================================
+# CONNEXION SQLITE
+# ============================================================
+
+def get_db():
+    db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+# ============================================================
+# OUTILS
+# ============================================================
+
+def safe_float(value):
+    if value is None:
+        return 0
+
+    return round(float(value), 4)
+
+
+def format_date(date):
+    if not date:
+        return "-"
+
+    try:
+        return datetime.fromisoformat(
+            str(date)
+        ).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(date)
+
+
+def json_data(data):
+    return json.dumps(
+        data,
+        ensure_ascii=False
+    )
+
+
+# ============================================================
+# LAYOUT PRINCIPAL
+# ============================================================
+
+def page_template(title, content, active="home"):
+
+    return f"""
+<!DOCTYPE html>
+
+<html lang="fr">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<title>{title} — Smart Energy Monitor</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+
+/* ============================================================
+   RESET
+============================================================ */
+
+* {{
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}}
+
+html {{
+    scroll-behavior: smooth;
+}}
+
+body {{
+
+    font-family:
+        "Segoe UI",
+        Arial,
+        sans-serif;
+
+    background:
+        radial-gradient(
+            circle at 85% 5%,
+            rgba(22,163,74,0.09),
+            transparent 25%
+        ),
+
+        radial-gradient(
+            circle at 5% 90%,
+            rgba(239,68,68,0.06),
+            transparent 25%
+        ),
+
+        #f6faf7;
+
+    color: #17221b;
+
+    min-height: 100vh;
+}}
+
+
+/* ============================================================
+   NAVIGATION
+============================================================ */
+
+.navbar {{
+
+    width: calc(100% - 40px);
+
+    margin: 20px auto;
+
+    min-height: 72px;
+
+    padding: 12px 20px;
+
+    background: rgba(255,255,255,0.90);
+
+    backdrop-filter: blur(18px);
+
+    border: 1px solid #e1ebe4;
+
+    border-radius: 23px;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    box-shadow:
+        0 12px 40px rgba(20,40,25,0.07);
+
+    position: sticky;
+
+    top: 15px;
+
+    z-index: 100;
+}}
+
+
+/* ============================================================
+   LOGO
+============================================================ */
+
+.logo {{
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 11px;
+
+    text-decoration: none;
+
+    color: #17221b;
+
+    font-weight: 850;
+
+    font-size: 18px;
+}}
+
+.logo-icon {{
+
+    width: 43px;
+
+    height: 43px;
+
+    border-radius: 14px;
+
+    background: #16a34a;
+
+    color: white;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 21px;
+
+    box-shadow:
+        0 8px 20px rgba(22,163,74,0.25);
+}}
+
+.logo span {{
+    color: #16a34a;
+}}
+
+
+/* ============================================================
+   MENU
+============================================================ */
+
+.menu {{
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 6px;
+
+    flex-wrap: wrap;
+}}
+
+.menu a {{
+
+    text-decoration: none;
+
+    color: #68766d;
+
+    font-size: 12px;
+
+    font-weight: 700;
+
+    padding: 10px 13px;
+
+    border-radius: 12px;
+
+    transition: 0.2s;
+}}
+
+.menu a:hover {{
+    background: #edf8f0;
+    color: #15803d;
+}}
+
+.menu a.active {{
+    background: #17221b;
+    color: white;
+}}
+
+
+/* ============================================================
+   HORLOGE
+============================================================ */
+
+.clock-container {{
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 10px;
+
+    padding: 9px 13px;
+
+    background: #f0f8f2;
+
+    border-radius: 15px;
+}}
+
+.live-dot {{
+
+    width: 8px;
+
+    height: 8px;
+
+    background: #16a34a;
+
+    border-radius: 50%;
+
+    box-shadow:
+        0 0 0 5px rgba(22,163,74,0.10);
+
+    animation: pulse 2s infinite;
+}}
+
+@keyframes pulse {{
+
+    0% {{
+        opacity: 1;
+    }}
+
+    50% {{
+        opacity: 0.4;
+    }}
+
+    100% {{
+        opacity: 1;
+    }}
+}}
+
+.clock {{
+    font-weight: 850;
+    font-size: 15px;
+}}
+
+
+/* ============================================================
+   CONTAINER
+============================================================ */
+
+.container {{
+
+    width: calc(100% - 40px);
+
+    max-width: 1500px;
+
+    margin: 25px auto 60px;
+}}
+
+
+/* ============================================================
+   PAGE HEADER
+============================================================ */
+
+.page-header {{
+
+    margin: 20px 0 25px;
+
+}}
+
+.page-header .tag {{
+
+    display: inline-block;
+
+    padding: 7px 11px;
+
+    border-radius: 20px;
+
+    background: #e8f7ed;
+
+    color: #15803d;
+
+    font-size: 10px;
+
+    font-weight: 850;
+
+    text-transform: uppercase;
+
+    letter-spacing: 1px;
+
+    margin-bottom: 10px;
+}}
+
+.page-header h1 {{
+
+    font-size: clamp(30px, 4vw, 48px);
+
+    letter-spacing: -2px;
+
+    line-height: 1;
+}}
+
+.page-header h1 span {{
+    color: #16a34a;
+}}
+
+.page-header p {{
+
+    margin-top: 10px;
+
+    color: #718078;
+
+    font-size: 14px;
+
+    line-height: 1.6;
+
+    max-width: 700px;
+}}
+
+
+/* ============================================================
+   HERO ACCUEIL
+============================================================ */
+
+.hero {{
+
+    min-height: 340px;
+
+    border-radius: 32px;
+
+    padding: 40px;
+
+    background:
+        linear-gradient(
+            120deg,
+            #ffffff,
+            #eff9f2
+        );
+
+    border: 1px solid #dfebe3;
+
+    position: relative;
+
+    overflow: hidden;
+
+    box-shadow:
+        0 25px 65px rgba(20,40,25,0.08);
+
+    display: flex;
+
+    align-items: center;
+}}
+
+.hero-content {{
+
+    max-width: 680px;
+
+    position: relative;
+
+    z-index: 2;
+}}
+
+.hero-status {{
+
+    display: inline-flex;
+
+    align-items: center;
+
+    gap: 8px;
+
+    padding: 8px 13px;
+
+    background: #e9f8ee;
+
+    color: #15803d;
+
+    border-radius: 20px;
+
+    font-size: 11px;
+
+    font-weight: 850;
+
+    margin-bottom: 20px;
+}}
+
+.hero-status i {{
+
+    width: 7px;
+
+    height: 7px;
+
+    background: #16a34a;
+
+    border-radius: 50%;
+}}
+
+.hero h1 {{
+
+    font-size: clamp(40px, 5vw, 72px);
+
+    line-height: 0.95;
+
+    letter-spacing: -4px;
+
+    margin-bottom: 20px;
+}}
+
+.hero h1 span {{
+    color: #16a34a;
+}}
+
+.hero p {{
+
+    color: #637168;
+
+    line-height: 1.7;
+
+    font-size: 15px;
+
+    max-width: 600px;
+}}
+
+
+/* ============================================================
+   HERO CERCLES
+============================================================ */
+
+.hero-orbit {{
+
+    position: absolute;
+
+    width: 430px;
+
+    height: 430px;
+
+    border-radius: 50%;
+
+    border: 1px solid rgba(22,163,74,0.14);
+
+    right: -70px;
+
+    top: -120px;
+}}
+
+.hero-orbit::before {{
+
+    content: "";
+
+    position: absolute;
+
+    inset: 45px;
+
+    border-radius: 50%;
+
+    border: 1px dashed rgba(22,163,74,0.20);
+}}
+
+.hero-core {{
+
+    position: absolute;
+
+    right: 115px;
+
+    top: 90px;
+
+    width: 110px;
+
+    height: 110px;
+
+    border-radius: 32px;
+
+    background: #16a34a;
+
+    color: white;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 48px;
+
+    transform: rotate(7deg);
+
+    box-shadow:
+        0 25px 50px rgba(22,163,74,0.25);
+}}
+
+
+/* ============================================================
+   GRID PRINCIPAL
+============================================================ */
+
+.grid-4 {{
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(4, 1fr);
+
+    gap: 15px;
+
+    margin-top: 18px;
+}}
+
+.grid-3 {{
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(3, 1fr);
+
+    gap: 18px;
+}}
+
+.grid-2 {{
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(2, 1fr);
+
+    gap: 20px;
+}}
+
+
+/* ============================================================
+   STAT CARDS
+============================================================ */
+
+.stat-card {{
+
+    background: white;
+
+    border: 1px solid #e1ebe4;
+
+    border-radius: 22px;
+
+    padding: 21px;
+
+    box-shadow:
+        0 10px 30px rgba(20,40,25,0.055);
+
+    transition:
+        transform 0.25s,
+        box-shadow 0.25s;
+}}
+
+.stat-card:hover {{
+
+    transform: translateY(-5px);
+
+    box-shadow:
+        0 18px 40px rgba(20,40,25,0.10);
+}}
+
+.stat-top {{
+
+    display: flex;
+
+    justify-content: space-between;
+
+    align-items: center;
+
+    margin-bottom: 15px;
+}}
+
+.stat-icon {{
+
+    width: 42px;
+
+    height: 42px;
+
+    border-radius: 13px;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 19px;
+}}
+
+.green {{
+    background: #e9f8ee;
+    color: #15803d;
+}}
+
+.red {{
+    background: #fff0f0;
+    color: #dc2626;
+}}
+
+.orange {{
+    background: #fff5e6;
+    color: #d97706;
+}}
+
+.dark {{
+    background: #eef1ef;
+    color: #17221b;
+}}
+
+.stat-label {{
+
+    font-size: 10px;
+
+    text-transform: uppercase;
+
+    color: #7a877f;
+
+    font-weight: 800;
+
+    letter-spacing: .5px;
+}}
+
+.stat-value {{
+
+    font-size: 26px;
+
+    font-weight: 900;
+
+    letter-spacing: -1px;
+}}
+
+
+/* ============================================================
+   SECTION
+============================================================ */
+
+.section-title {{
+
+    margin: 34px 2px 16px;
+}}
+
+.section-title h2 {{
+    font-size: 22px;
+}}
+
+.section-title p {{
+
+    color: #78857d;
+
+    font-size: 12px;
+
+    margin-top: 4px;
+}}
+
+
+/* ============================================================
+   CARTE INFO
+============================================================ */
+
+.info-panel {{
+
+    background:
+        linear-gradient(
+            145deg,
+            #102219,
+            #173b27
+        );
+
+    color: white;
+
+    border-radius: 28px;
+
+    padding: 29px;
+
+    position: relative;
+
+    overflow: hidden;
+
+    min-height: 470px;
+
+    box-shadow:
+        0 25px 55px rgba(16,34,25,0.20);
+}}
+
+.info-panel::after {{
+
+    content: "";
+
+    position: absolute;
+
+    width: 230px;
+
+    height: 230px;
+
+    border: 1px solid rgba(255,255,255,0.07);
+
+    border-radius: 50%;
+
+    right: -100px;
+
+    bottom: -100px;
+}}
+
+.info-panel .small-title {{
+
+    color: #86efac;
+
+    font-size: 10px;
+
+    text-transform: uppercase;
+
+    letter-spacing: 1.5px;
+
+    font-weight: 850;
+
+    margin-bottom: 12px;
+}}
+
+.info-panel h2 {{
+
+    font-size: 27px;
+
+    line-height: 1.15;
+
+    margin-bottom: 12px;
+}}
+
+.info-panel > p {{
+
+    color: #a9bcae;
+
+    font-size: 13px;
+
+    line-height: 1.7;
+
+    margin-bottom: 27px;
+}}
+
+.step {{
+
+    display: flex;
+
+    gap: 13px;
+
+    margin-bottom: 20px;
+
+    position: relative;
+
+    z-index: 2;
+}}
+
+.step-number {{
+
+    width: 37px;
+
+    height: 37px;
+
+    flex-shrink: 0;
+
+    border-radius: 11px;
+
+    background: rgba(255,255,255,0.10);
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-weight: 850;
+
+    color: #86efac;
+}}
+
+.step h4 {{
+    font-size: 13px;
+    margin-bottom: 3px;
+}}
+
+.step p {{
+
+    color: #9db0a3;
+
+    font-size: 11px;
+
+    line-height: 1.5;
+}}
+
+
+/* ============================================================
+   ROOM CARDS
+============================================================ */
+
+.room-card {{
+
+    background: white;
+
+    border: 1px solid #e1ebe4;
+
+    border-radius: 22px;
+
+    padding: 20px;
+
+    text-decoration: none;
+
+    color: #17221b;
+
+    display: block;
+
+    transition:
+        transform .25s,
+        box-shadow .25s;
+}}
+
+.room-card:hover {{
+
+    transform: translateY(-7px);
+
+    box-shadow:
+        0 20px 40px rgba(20,40,25,0.10);
+}}
+
+.room-top {{
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: space-between;
+
+    margin-bottom: 18px;
+}}
+
+.room-icon {{
+
+    width: 45px;
+
+    height: 45px;
+
+    border-radius: 14px;
+
+    background: #edf8f0;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 21px;
+}}
+
+.status-normal {{
+
+    color: #15803d;
+
+    background: #eaf8ee;
+
+    padding: 6px 9px;
+
+    border-radius: 20px;
+
+    font-size: 9px;
+
+    font-weight: 850;
+}}
+
+.room-card h3 {{
+
+    font-size: 14px;
+
+    margin-bottom: 5px;
+}}
+
+.room-card .location {{
+
+    color: #89958d;
+
+    font-size: 10px;
+}}
+
+.room-consumption {{
+
+    border-top: 1px solid #edf1ee;
+
+    margin-top: 17px;
+
+    padding-top: 13px;
+}}
+
+.room-consumption small {{
+    color: #8a968e;
+    font-size: 10px;
+}}
+
+.room-consumption strong {{
+
+    display: block;
+
+    color: #15803d;
+
+    font-size: 19px;
+
+    margin-top: 3px;
+}}
+
+
+/* ============================================================
+   GRAPHIQUE
+============================================================ */
+
+.chart-card {{
+
+    background: white;
+
+    border: 1px solid #e1ebe4;
+
+    border-radius: 25px;
+
+    padding: 25px;
+
+    box-shadow:
+        0 12px 35px rgba(20,40,25,0.055);
+
+    min-height: 350px;
+}}
+
+.chart-card h3 {{
+    font-size: 16px;
+    margin-bottom: 5px;
+}}
+
+.chart-card p {{
+
+    color: #849087;
+
+    font-size: 11px;
+
+    margin-bottom: 18px;
+}}
+
+.chart-container {{
+
+    position: relative;
+
+    height: 275px;
+}}
+
+
+/* ============================================================
+   TABLEAU
+============================================================ */
+
+.table-card {{
+
+    background: white;
+
+    border: 1px solid #e1ebe4;
+
+    border-radius: 24px;
+
+    padding: 22px;
+
+    overflow-x: auto;
+
+    box-shadow:
+        0 12px 35px rgba(20,40,25,0.05);
+}}
+
+table {{
+
+    width: 100%;
+
+    border-collapse: collapse;
+
+    font-size: 12px;
+}}
+
+th {{
+
+    text-align: left;
+
+    color: #7a877f;
+
+    font-size: 10px;
+
+    text-transform: uppercase;
+
+    padding: 13px;
+
+    border-bottom: 1px solid #e8eee9;
+}}
+
+td {{
+
+    padding: 14px 13px;
+
+    border-bottom: 1px solid #f0f3f1;
+}}
+
+.badge {{
+
+    display: inline-block;
+
+    padding: 6px 9px;
+
+    border-radius: 15px;
+
+    font-size: 9px;
+
+    font-weight: 850;
+}}
+
+.badge-red {{
+    background: #fff0f0;
+    color: #dc2626;
+}}
+
+.badge-green {{
+    background: #eaf8ee;
+    color: #15803d;
+}}
+
+.badge-orange {{
+    background: #fff5e6;
+    color: #d97706;
+}}
+
+
+/* ============================================================
+   MODULES DU BAS
+============================================================ */
+
+.modules {{
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(4, 1fr);
+
+    gap: 14px;
+}}
+
+.module {{
+
+    min-height: 105px;
+
+    border-radius: 21px;
+
+    padding: 19px;
+
+    text-decoration: none;
+
+    color: white;
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 13px;
+
+    transition:
+        transform .25s,
+        box-shadow .25s;
+}}
+
+.module:hover {{
+
+    transform: translateY(-6px);
+
+    box-shadow:
+        0 20px 35px rgba(20,40,25,0.13);
+}}
+
+.module-icon {{
+
+    width: 45px;
+
+    height: 45px;
+
+    border-radius: 14px;
+
+    background: rgba(255,255,255,0.18);
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    font-size: 19px;
+
+    flex-shrink: 0;
+}}
+
+.module h3 {{
+    font-size: 13px;
+}}
+
+.module p {{
+
+    margin-top: 4px;
+
+    font-size: 10px;
+
+    opacity: .8;
+
+    line-height: 1.4;
+}}
+
+.module-analysis {{
+    background: linear-gradient(135deg,#2563eb,#1d4ed8);
+}}
+
+.module-history {{
+    background: linear-gradient(135deg,#7c3aed,#5b21b6);
+}}
+
+.module-alert {{
+    background: linear-gradient(135deg,#ef4444,#b91c1c);
+}}
+
+.module-optimization {{
+    background: linear-gradient(135deg,#16a34a,#15803d);
+}}
+
+
+/* ============================================================
+   FOOTER
+============================================================ */
+
+footer {{
+
+    width: calc(100% - 40px);
+
+    max-width: 1500px;
+
+    margin: 0 auto 30px;
+
+    padding: 22px;
+
+    text-align: center;
+
+    color: #8a968e;
+
+    font-size: 11px;
+}}
+
+
+/* ============================================================
+   RESPONSIVE
+============================================================ */
+
+@media(max-width:1100px) {{
+
+    .grid-4 {{
+        grid-template-columns: repeat(2,1fr);
+    }}
+
+    .rooms {{
+        grid-template-columns: repeat(2,1fr) !important;
+    }}
+
+    .modules {{
+        grid-template-columns: repeat(2,1fr);
+    }}
+
+    .main-layout {{
+        grid-template-columns: 1fr !important;
+    }}
+}}
+
+@media(max-width:750px) {{
+
+    .navbar {{
+        width: calc(100% - 20px);
+    }}
+
+    .menu {{
+        display: none;
+    }}
+
+    .container {{
+        width: calc(100% - 20px);
+    }}
+
+    .grid-4,
+    .grid-3,
+    .grid-2 {{
+        grid-template-columns: 1fr;
+    }}
+
+    .hero {{
+        padding: 28px;
+    }}
+
+    .hero h1 {{
+        font-size: 42px;
+    }}
+
+    .hero-orbit,
+    .hero-core {{
+        display: none;
+    }}
+
+    .rooms {{
+        grid-template-columns: 1fr !important;
+    }}
+
+    .modules {{
+        grid-template-columns: 1fr;
+    }}
+
+}}
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<!-- ========================================================
+     NAVBAR
+========================================================= -->
+
+<nav class="navbar">
+
+    <a href="/" class="logo">
+
+        <div class="logo-icon">
+            ⚡
+        </div>
+
+        Smart <span>Energy</span> Monitor
+
+    </a>
+
+
+    <div class="menu">
+
+        <a href="/" class="{"active" if active == "home" else ""}">
+            Accueil
+        </a>
+
+        <a href="/historique"
+           class="{"active" if active == "historique" else ""}">
+            Historique
+        </a>
+
+        <a href="/comparaisons"
+           class="{"active" if active == "comparaisons" else ""}">
+            Comparaisons
+        </a>
+
+        <a href="/alertes"
+           class="{"active" if active == "alertes" else ""}">
+            Alertes
+        </a>
+
+        <a href="/optimisations"
+           class="{"active" if active == "optimisations" else ""}">
+            Optimisations
+        </a>
+
+    </div>
+
+
+    <div class="clock-container">
+
+        <div class="live-dot"></div>
+
+        <div>
+
+            <div id="clock" class="clock">
+                --:--:--
+            </div>
+
+        </div>
+
+    </div>
+
+</nav>
+
+
+<!-- ========================================================
+     CONTENU
+========================================================= -->
+
+<main class="container">
+
+{content}
+
+</main>
+
+
+<footer>
+
+    ⚡ Smart Energy Monitor
+    — Système intelligent de gestion de l'électricité
+
+</footer>
+
+
+<script>
+
+/* ==========================================================
+   HORLOGE
+========================================================== */
+
+function updateClock() {{
+
+    const now = new Date();
+
+    const heures =
+        String(now.getHours()).padStart(2,"0");
+
+    const minutes =
+        String(now.getMinutes()).padStart(2,"0");
+
+    const secondes =
+        String(now.getSeconds()).padStart(2,"0");
+
+    document.getElementById("clock").textContent =
+        heures + ":" + minutes + ":" + secondes;
+}}
+
+updateClock();
+
+setInterval(updateClock,1000);
+
+</script>
+
+
+</body>
+
+</html>
+"""
+
+
+# ============================================================
+# ACCUEIL
+# ============================================================
+
+@app.route("/")
+def home():
+
+    db = get_db()
+    cur = db.cursor()
+
+    # --------------------------------------------------------
+    # STATISTIQUES
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM salles
+    """)
+
+    nombre_salles = cur.fetchone()["total"]
+
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM equipements
+    """)
+
+    nombre_equipements = cur.fetchone()["total"]
+
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM alertes
+    """)
+
+    nombre_alertes = cur.fetchone()["total"]
+
+    cur.execute("""
+        SELECT COUNT(*) AS total
+        FROM optimisations
+    """)
+
+    nombre_optimisations = cur.fetchone()["total"]
+
+    cur.execute("""
+        SELECT COALESCE(SUM(energie),0) AS total
+        FROM consommations
+    """)
+
+    energie_totale = safe_float(
+        cur.fetchone()["total"]
+    )
+
+    # --------------------------------------------------------
+    # DERNIÈRE PUISSANCE
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT SUM(puissance) AS puissance
+        FROM consommations
+        WHERE date_heure = (
+            SELECT MAX(date_heure)
+            FROM consommations
+        )
+    """)
+
+    puissance_actuelle = safe_float(
+        cur.fetchone()["puissance"]
+    )
+
+    # --------------------------------------------------------
+    # SALLES
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            s.id,
+            s.nom,
+            s.description,
+            s.localisation,
+            COALESCE(SUM(c.energie),0) AS energie
+
+        FROM salles s
+
+        LEFT JOIN equipements e
+            ON e.salle_id = s.id
+
+        LEFT JOIN consommations c
+            ON c.equipement_id = e.id
+
+        GROUP BY
+            s.id,
+            s.nom,
+            s.description,
+            s.localisation
+
+        ORDER BY s.id
+    """)
+
+    salles = cur.fetchall()
+
+    # --------------------------------------------------------
+    # DERNIÈRE MESURE
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT MAX(date_heure) AS date
+        FROM consommations
+    """)
+
+    derniere_mesure = cur.fetchone()["date"]
+
+    db.close()
+
+    # --------------------------------------------------------
+    # ICÔNES DES SALLES
+    # --------------------------------------------------------
+
+    icones = {
+        "Salle informatique": "💻",
+        "Salle de cours": "📚",
+        "Laboratoire": "🔬",
+        "Bureau administratif": "🏢",
+        "Salle de réunion": "👥"
+    }
+
+    # --------------------------------------------------------
+    # CARTES SALLES
+    # --------------------------------------------------------
+
+    rooms_html = ""
+
+    for salle in salles:
+
+        nom = salle["nom"]
+
+        icone = icones.get(
+            nom,
+            "🏢"
+        )
+
+        rooms_html += f"""
+
+        <a class="room-card"
+           href="/salle/{salle["id"]}">
+
+            <div class="room-top">
+
+                <div class="room-icon">
+                    {icone}
+                </div>
+
+                <span class="status-normal">
+                    ● SURVEILLÉE
+                </span>
+
+            </div>
+
+            <h3>
+                {nom}
+            </h3>
+
+            <div class="location">
+                {salle["localisation"] or "Localisation non définie"}
+            </div>
+
+            <div class="room-consumption">
+
+                <small>
+                    Consommation enregistrée
+                </small>
+
+                <strong>
+                    {safe_float(salle["energie"]):.2f} kWh
+                </strong>
+
+            </div>
+
+        </a>
+        """
+
+    # --------------------------------------------------------
+    # PAGE
+    # --------------------------------------------------------
+
+    content = f"""
+
+<!-- HERO -->
+
+<section class="hero">
+
+    <div class="hero-content">
+
+        <div class="hero-status">
+
+            <i></i>
+
+            Système opérationnel
+
+        </div>
+
+        <h1>
+            Smart <span>Energy</span><br>
+            Monitor
+        </h1>
+
+        <p>
+            Une plateforme intelligente pour surveiller,
+            analyser et optimiser la consommation électrique
+            de chaque espace de votre établissement.
+        </p>
+
+    </div>
+
+
+    <div class="hero-orbit"></div>
+
+    <div class="hero-core">
+        ⚡
+    </div>
+
+</section>
+
+
+<!-- STATISTIQUES -->
+
+<section class="grid-4">
+
+    <div class="stat-card">
+
+        <div class="stat-top">
+
+            <div class="stat-icon green">
+                ⚡
+            </div>
+
+        </div>
+
+        <div class="stat-label">
+            Énergie enregistrée
+        </div>
+
+        <div class="stat-value">
+            {energie_totale:.2f}
+            <small style="font-size:12px;">kWh</small>
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-top">
+
+            <div class="stat-icon dark">
+                📡
+            </div>
+
+        </div>
+
+        <div class="stat-label">
+            Équipements surveillés
+        </div>
+
+        <div class="stat-value">
+            {nombre_equipements}
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-top">
+
+            <div class="stat-icon red">
+                🚨
+            </div>
+
+        </div>
+
+        <div class="stat-label">
+            Alertes enregistrées
+        </div>
+
+        <div class="stat-value">
+            {nombre_alertes}
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-top">
+
+            <div class="stat-icon green">
+                🧠
+            </div>
+
+        </div>
+
+        <div class="stat-label">
+            Optimisations
+        </div>
+
+        <div class="stat-value">
+            {nombre_optimisations}
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- EXPLICATION -->
+
+<section class="section-title">
+
+    <h2>
+        Comment fonctionne Smart Energy Monitor ?
+    </h2>
+
+    <p>
+        Le système transforme les données énergétiques
+        en informations exploitables.
+    </p>
+
+</section>
+
+
+<section class="grid-2">
+
+    <div class="info-panel">
+
+        <div class="small-title">
+            Architecture intelligente
+        </div>
+
+        <h2>
+            De la donnée<br>
+            à la décision.
+        </h2>
+
+        <p>
+            Chaque étape du système participe à la surveillance
+            intelligente de l'énergie.
+        </p>
+
+
+        <div class="step">
+
+            <div class="step-number">
+                01
+            </div>
+
+            <div>
+
+                <h4>
+                    Simulation
+                </h4>
+
+                <p>
+                    Les équipements produisent des données
+                    énergétiques simulées.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div class="step">
+
+            <div class="step-number">
+                02
+            </div>
+
+            <div>
+
+                <h4>
+                    Analyse
+                </h4>
+
+                <p>
+                    Les consommations sont étudiées afin
+                    d'identifier les comportements inhabituels.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div class="step">
+
+            <div class="step-number">
+                03
+            </div>
+
+            <div>
+
+                <h4>
+                    Alertes
+                </h4>
+
+                <p>
+                    Le système signale les situations
+                    nécessitant une attention.
+                </p>
+
+            </div>
+
+        </div>
+
+
+        <div class="step">
+
+            <div class="step-number">
+                04
+            </div>
+
+            <div>
+
+                <h4>
+                    Optimisation
+                </h4>
+
+                <p>
+                    Les données permettent de générer
+                    des recommandations énergétiques.
+                </p>
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <div>
+
+        <div class="chart-card">
+
+            <h3>
+                État actuel du système
+            </h3>
+
+            <p>
+                Vue générale des principaux indicateurs.
+            </p>
+
+            <div class="chart-container">
+
+                <canvas id="homeChart"></canvas>
+
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<!-- SALLES -->
+
+<section class="section-title">
+
+    <h2>
+        🏢 Espaces surveillés
+    </h2>
+
+    <p>
+        Sélectionnez une salle pour accéder à son analyse détaillée.
+    </p>
+
+</section>
+
+
+<div class="rooms"
+     style="
+        display:grid;
+        grid-template-columns:repeat(5,1fr);
+        gap:14px;
+     ">
+
+    {rooms_html}
+
+</div>
+
+
+<!-- DERNIÈRE ACTIVITÉ -->
+
+<section class="section-title">
+
+    <h2>
+        📡 Activité du système
+    </h2>
+
+</section>
+
+
+<div class="grid-3">
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Puissance dernière mesure
+        </div>
+
+        <div class="stat-value">
+            {puissance_actuelle:.3f}
+            <small style="font-size:12px;">kW</small>
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Salles surveillées
+        </div>
+
+        <div class="stat-value">
+            {nombre_salles}
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Dernière mesure
+        </div>
+
+        <div style="
+            margin-top:8px;
+            font-size:14px;
+            font-weight:800;
+        ">
+            {format_date(derniere_mesure)}
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- MODULES -->
+
+<section class="section-title">
+
+    <h2>
+        Modules
+    </h2>
+
+    <p>
+        Accédez directement aux différentes fonctions du système.
+    </p>
+
+</section>
+
+
+<div class="modules">
+
+    <a href="/historique"
+       class="module module-history">
+
+        <div class="module-icon">
+            📜
+        </div>
+
+        <div>
+
+            <h3>
+                Historique
+            </h3>
+
+            <p>
+                Explorer les données énergétiques.
+            </p>
+
+        </div>
+
+    </a>
+
+
+    <a href="/comparaisons"
+       class="module module-analysis">
+
+        <div class="module-icon">
+            📊
+        </div>
+
+        <div>
+
+            <h3>
+                Comparaisons
+            </h3>
+
+            <p>
+                Comparer les performances des salles.
+            </p>
+
+        </div>
+
+    </a>
+
+
+    <a href="/alertes"
+       class="module module-alert">
+
+        <div class="module-icon">
+            🚨
+        </div>
+
+        <div>
+
+            <h3>
+                Alertes
+            </h3>
+
+            <p>
+                Consulter les anomalies détectées.
+            </p>
+
+        </div>
+
+    </a>
+
+
+    <a href="/optimisations"
+       class="module module-optimization">
+
+        <div class="module-icon">
+            🧠
+        </div>
+
+        <div>
+
+            <h3>
+                Optimisations
+            </h3>
+
+            <p>
+                Découvrir les recommandations.
+            </p>
+
+        </div>
+
+    </a>
+
+</div>
+
+
+<script>
+
+new Chart(
+
+    document.getElementById("homeChart"),
+
+    {{
+
+        type: "doughnut",
+
+        data: {{
+
+            labels: [
+                "Salles",
+                "Équipements",
+                "Alertes",
+                "Optimisations"
+            ],
+
+            datasets: [{{
+
+                data: [
+                    {nombre_salles},
+                    {nombre_equipements},
+                    {nombre_alertes},
+                    {nombre_optimisations}
+                ]
+
+            }}]
+
+        }},
+
+        options: {{
+
+            responsive: true,
+
+            maintainAspectRatio: false,
+
+            cutout: "68%",
+
+            plugins: {{
+
+                legend: {{
+
+                    position: "bottom"
+
+                }}
+
+            }}
+
+        }}
+
+    }}
+
+);
+
+</script>
+
+"""
+
+    return page_template(
+        "Accueil",
+        content,
+        "home"
+    )
+
+
+# ============================================================
+# PAGE D'UNE SALLE
+# ============================================================
+
+@app.route("/salle/<int:salle_id>")
+def salle(salle_id):
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("""
+        SELECT *
+        FROM salles
+        WHERE id = ?
+    """, (salle_id,))
+
+    salle_data = cur.fetchone()
+
+    if not salle_data:
+        db.close()
+        abort(404)
+
+    # --------------------------------------------------------
+    # ÉQUIPEMENTS
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            e.id,
+            e.nom,
+            e.type,
+            e.etat,
+            COALESCE(SUM(c.energie),0) AS energie,
+            COALESCE(AVG(c.puissance),0) AS puissance
+
+        FROM equipements e
+
+        LEFT JOIN consommations c
+            ON c.equipement_id = e.id
+
+        WHERE e.salle_id = ?
+
+        GROUP BY
+            e.id,
+            e.nom,
+            e.type,
+            e.etat
+
+        ORDER BY e.id
+    """, (salle_id,))
+
+    equipements = cur.fetchall()
+
+    # --------------------------------------------------------
+    # CONSOMMATION TOTALE
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            COALESCE(SUM(c.energie),0) AS energie,
+            COALESCE(AVG(c.puissance),0) AS puissance
+        FROM consommations c
+
+        JOIN equipements e
+            ON e.id = c.equipement_id
+
+        WHERE e.salle_id = ?
+    """, (salle_id,))
+
+    stats = cur.fetchone()
+
+    # --------------------------------------------------------
+    # HISTORIQUE PAR MESURE
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            c.date_heure,
+            SUM(c.energie) AS energie,
+            SUM(c.puissance) AS puissance
+
+        FROM consommations c
+
+        JOIN equipements e
+            ON e.id = c.equipement_id
+
+        WHERE e.salle_id = ?
+
+        GROUP BY c.date_heure
+
+        ORDER BY c.date_heure DESC
+
+        LIMIT 30
+    """, (salle_id,))
+
+    historique = list(
+        reversed(cur.fetchall())
+    )
+
+    db.close()
+
+    labels = [
+        str(x["date_heure"])[11:16]
+        for x in historique
+    ]
+
+    energie = [
+        safe_float(x["energie"])
+        for x in historique
+    ]
+
+    equip_labels = [
+        x["nom"]
+        for x in equipements
+    ]
+
+    equip_values = [
+        safe_float(x["energie"])
+        for x in equipements
+    ]
+
+    equip_html = ""
+
+    for equipement in equipements:
+
+        equip_html += f"""
+
+        <tr>
+
+            <td>
+                <strong>
+                    {equipement["nom"]}
+                </strong>
+            </td>
+
+            <td>
+                {equipement["type"] or "-"}
+            </td>
+
+            <td>
+                {equipement["etat"] or "-"}
+            </td>
+
+            <td>
+                {safe_float(equipement["puissance"]):.3f} kW
+            </td>
+
+            <td>
+                {safe_float(equipement["energie"]):.3f} kWh
+            </td>
+
+        </tr>
+
+        """
+
+    content = f"""
+
+<div class="page-header">
+
+    <div class="tag">
+        Salle surveillée
+    </div>
+
+    <h1>
+        {salle_data["nom"]}
+    </h1>
+
+    <p>
+        {salle_data["description"] or
+         "Analyse détaillée de la consommation énergétique."}
+    </p>
+
+</div>
+
+
+<div class="grid-4">
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Énergie
+        </div>
+
+        <div class="stat-value">
+            {safe_float(stats["energie"]):.2f}
+            <small style="font-size:12px;">kWh</small>
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Puissance moyenne
+        </div>
+
+        <div class="stat-value">
+            {safe_float(stats["puissance"]):.3f}
+            <small style="font-size:12px;">kW</small>
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Équipements
+        </div>
+
+        <div class="stat-value">
+            {len(equipements)}
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-label">
+            Localisation
+        </div>
+
+        <div style="
+            margin-top:10px;
+            font-size:13px;
+            font-weight:800;
+        ">
+            {salle_data["localisation"] or "-"}
+        </div>
+
+    </div>
+
+</div>
+
+
+<section class="section-title">
+
+    <h2>
+        📊 Analyse de la salle
+    </h2>
+
+    <p>
+        Évolution de la consommation et répartition
+        entre les équipements.
+    </p>
+
+</section>
+
+
+<div class="grid-2">
+
+    <div class="chart-card">
+
+        <h3>
+            Évolution de la consommation
+        </h3>
+
+        <p>
+            Mesures enregistrées dans la base.
+        </p>
+
+        <div class="chart-container">
+
+            <canvas id="roomLine"></canvas>
+
+        </div>
+
+    </div>
+
+
+    <div class="chart-card">
+
+        <h3>
+            Consommation par équipement
+        </h3>
+
+        <p>
+            Répartition de l'énergie enregistrée.
+        </p>
+
+        <div class="chart-container">
+
+            <canvas id="roomPie"></canvas>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<section class="section-title">
+
+    <h2>
+        🔌 Équipements
+    </h2>
+
+</section>
+
+
+<div class="table-card">
+
+<table>
+
+<thead>
+
+<tr>
+
+    <th>Équipement</th>
+    <th>Type</th>
+    <th>État</th>
+    <th>Puissance moyenne</th>
+    <th>Énergie</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{equip_html}
+
+</tbody>
+
+</table>
+
+</div>
+
+
+<script>
+
+const roomLabels =
+    {json_data(labels)};
+
+const roomEnergy =
+    {json_data(energie)};
+
+const equipLabels =
+    {json_data(equip_labels)};
+
+const equipValues =
+    {json_data(equip_values)};
+
+
+new Chart(
+
+    document.getElementById("roomLine"),
+
+    {{
+
+        type: "line",
+
+        data: {{
+
+            labels: roomLabels,
+
+            datasets: [{{
+
+                label: "Énergie (kWh)",
+
+                data: roomEnergy,
+
+                tension: 0.35,
+
+                fill: true
+
+            }}]
+
+        }},
+
+        options: {{
+
+            responsive: true,
+
+            maintainAspectRatio: false
+
+        }}
+
+    }}
+
+);
+
+
+new Chart(
+
+    document.getElementById("roomPie"),
+
+    {{
+
+        type: "doughnut",
+
+        data: {{
+
+            labels: equipLabels,
+
+            datasets: [{{
+
+                data: equipValues
+
+            }}]
+
+        }},
+
+        options: {{
+
+            responsive: true,
+
+            maintainAspectRatio: false,
+
+            cutout: "58%",
+
+            plugins: {{
+
+                legend: {{
+
+                    position: "bottom"
+
+                }}
+
+            }}
+
+        }}
+
+    }}
+
+);
+
+</script>
+
+"""
+
+    return page_template(
+        salle_data["nom"],
+        content,
+        "home"
+    )
+
+
+# ============================================================
+# HISTORIQUE
+# ============================================================
+
+@app.route("/historique")
+def historique():
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("""
+        SELECT
+            c.date_heure,
+            s.nom AS salle,
+            e.nom AS equipement,
+            c.puissance,
+            c.energie
+
+        FROM consommations c
+
+        JOIN equipements e
+            ON e.id = c.equipement_id
+
+        JOIN salles s
+            ON s.id = e.salle_id
+
+        ORDER BY c.date_heure DESC
+
+        LIMIT 100
+    """)
+
+    donnees = cur.fetchall()
+
+    db.close()
+
+    labels = [
+        format_date(x["date_heure"])
+        for x in donnees
+    ]
+
+    energies = [
+        safe_float(x["energie"])
+        for x in donnees
+    ]
+
+    rows = ""
+
+    for x in donnees:
+
+        rows += f"""
+
+        <tr>
+
+            <td>
+                {format_date(x["date_heure"])}
+            </td>
+
+            <td>
+                {x["salle"]}
+            </td>
+
+            <td>
+                {x["equipement"]}
+            </td>
+
+            <td>
+                {safe_float(x["puissance"]):.3f} kW
+            </td>
+
+            <td>
+                {safe_float(x["energie"]):.4f} kWh
+            </td>
+
+        </tr>
+
+        """
+
+    content = f"""
+
+<div class="page-header">
+
+    <div class="tag">
+        Données énergétiques
+    </div>
+
+    <h1>
+        Historique
+    </h1>
+
+    <p>
+        Consultez les mesures enregistrées par le système
+        et observez leur évolution.
+    </p>
+
+</div>
+
+
+<div class="chart-card">
+
+    <h3>
+        Évolution des mesures
+    </h3>
+
+    <p>
+        Les dernières mesures enregistrées dans SQLite.
+    </p>
+
+    <div class="chart-container">
+
+        <canvas id="historyChart"></canvas>
+
+    </div>
+
+</div>
+
+
+<section class="section-title">
+
+    <h2>
+        Dernières mesures
+    </h2>
+
+</section>
+
+
+<div class="table-card">
+
+<table>
+
+<thead>
+
+<tr>
+
+    <th>Date</th>
+    <th>Salle</th>
+    <th>Équipement</th>
+    <th>Puissance</th>
+    <th>Énergie</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{rows}
+
+</tbody>
+
+</table>
+
+</div>
+
+
+<script>
+
+new Chart(
+
+    document.getElementById("historyChart"),
+
+    {{
+
+        type: "line",
+
+        data: {{
+
+            labels:
+                {json_data(labels)},
+
+            datasets: [{{
+
+                label: "Énergie (kWh)",
+
+                data:
+                    {json_data(energies)},
+
+                tension: 0.3
+
+            }}]
+
+        }},
+
+        options: {{
+
+            responsive: true,
+
+            maintainAspectRatio: false
+
+        }}
+
+    }}
+
+);
+
+</script>
+
+"""
+
+    return page_template(
+        "Historique",
+        content,
+        "historique"
+    )
+
+
+# ============================================================
+# COMPARAISONS
+# ============================================================
+
+@app.route("/comparaisons")
+def comparaisons():
+
+    db = get_db()
+    cur = db.cursor()
+
+    # --------------------------------------------------------
+    # SALLES
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            s.nom,
+            COALESCE(SUM(c.energie),0) AS energie,
+            COALESCE(AVG(c.puissance),0) AS puissance
+
+        FROM salles s
+
+        LEFT JOIN equipements e
+            ON e.salle_id = s.id
+
+        LEFT JOIN consommations c
+            ON c.equipement_id = e.id
+
+        GROUP BY s.id, s.nom
+
+        ORDER BY energie DESC
+    """)
+
+    salles = cur.fetchall()
+
+    # --------------------------------------------------------
+    # TYPES D'ÉQUIPEMENTS
+    # --------------------------------------------------------
+
+    cur.execute("""
+        SELECT
+            e.nom,
+            COALESCE(SUM(c.energie),0) AS energie
+
+        FROM equipements e
+
+        LEFT JOIN consommations c
+            ON c.equipement_id = e.id
+
+        GROUP BY e.nom
+
+        ORDER BY energie DESC
+    """)
+
+    equipements = cur.fetchall()
+
+    db.close()
+
+    room_labels = [
+        x["nom"]
+        for x in salles
+    ]
+
+    room_values = [
+        safe_float(x["energie"])
+        for x in salles
+    ]
+
+    equip_labels = [
+        x["nom"]
+        for x in equipements
+    ]
+
+    equip_values = [
+        safe_float(x["energie"])
+        for x in equipements
+    ]
+
+    rows = ""
+
+    for x in salles:
+
+        rows += f"""
+
+        <tr>
+
+            <td>
+                <strong>
+                    {x["nom"]}
+                </strong>
+            </td>
+
+            <td>
+                {safe_float(x["energie"]):.3f} kWh
+            </td>
+
+            <td>
+                {safe_float(x["puissance"]):.3f} kW
+            </td>
+
+        </tr>
+
+        """
+
+    content = f"""
+
+<div class="page-header">
+
+    <div class="tag">
+        Analyse comparative
+    </div>
+
+    <h1>
+        Comparaisons
+    </h1>
+
+    <p>
+        Comparez les consommations enregistrées entre
+        les différents espaces et équipements.
+    </p>
+
+</div>
+
+
+<div class="grid-2">
+
+    <div class="chart-card">
+
+        <h3>
+            Consommation par salle
+        </h3>
+
+        <p>
+            Comparaison de l'énergie enregistrée.
+        </p>
+
+        <div class="chart-container">
+
+            <canvas id="roomsChart"></canvas>
+
+        </div>
+
+    </div>
+
+
+    <div class="chart-card">
+
+        <h3>
+            Consommation par équipement
+        </h3>
+
+        <p>
+            Contribution des équipements.
+        </p>
+
+        <div class="chart-container">
+
+            <canvas id="equipChart"></canvas>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<section class="section-title">
+
+    <h2>
+        Tableau comparatif
+    </h2>
+
+</section>
+
+
+<div class="table-card">
+
+<table>
+
+<thead>
+
+<tr>
+
+    <th>Salle</th>
+    <th>Énergie</th>
+    <th>Puissance moyenne</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{rows}
+
+</tbody>
+
+</table>
+
+</div>
+
+
+<script>
+
+new Chart(
+
+    document.getElementById("roomsChart"),
+
+    {{
+
+        type: "bar",
+
+        data: {{
+
+            labels:
+                {json_data(room_labels)},
+
+            datasets: [{{
+
+                label: "Énergie (kWh)",
+
+                data:
+                    {json_data(room_values)}
+
+            }}]
+
+        }},
+
+        options: {{
+
+            responsive: true,
+
+            maintainAspectRatio: false,
+
+            indexAxis: "y"
+
+        }}
+
+    }}
+
+);
+
+
+new Chart(
+
+    document.getElementById("equipChart"),
+
+    {{
+
+        type: "doughnut",
+
+        data: {{
+
+            labels:
+                {json_data(equip_labels)},
+
+            datasets: [{{
+
+                data:
+                    {json_data(equip_values)}
+
+            }}]
+
+        }},
+
+        options: {{
+
+            responsive: true,
+
+            maintainAspectRatio: false,
+
+            cutout: "58%",
+
+            plugins: {{
+
+                legend: {{
+
+                    position: "bottom"
+
+                }}
+
+            }}
+
+        }}
+
+    }}
+
+);
+
+</script>
+
+"""
+
+    return page_template(
+        "Comparaisons",
+        content,
+        "comparaisons"
+    )
+
+
+# ============================================================
+# ALERTES
+# ============================================================
+
+@app.route("/alertes")
+def alertes():
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("""
+        SELECT
+            a.*,
+            s.nom AS salle,
+            e.nom AS equipement
+
+        FROM alertes a
+
+        LEFT JOIN salles s
+            ON s.id = a.salle_id
+
+        LEFT JOIN equipements e
+            ON e.id = a.equipement_id
+
+        ORDER BY a.date_heure DESC
+
+        LIMIT 100
+    """)
+
+    alertes_data = cur.fetchall()
+
+    db.close()
+
+    rows = ""
+
+    for alerte in alertes_data:
+
+        niveau = str(
+            alerte["niveau"] or "INFO"
+        ).upper()
+
+        if niveau in ["CRITIQUE", "HIGH", "HAUTE"]:
+            classe = "badge-red"
+
+        elif niveau in ["MOYEN", "MEDIUM"]:
+            classe = "badge-orange"
+
+        else:
+            classe = "badge-green"
+
+        rows += f"""
+
+        <tr>
+
+            <td>
+                {format_date(alerte["date_heure"])}
+            </td>
+
+            <td>
+                {alerte["salle"] or "-"}
+            </td>
+
+            <td>
+                {alerte["equipement"] or "-"}
+            </td>
+
+            <td>
+                <span class="badge {classe}">
+                    {niveau}
+                </span>
+            </td>
+
+            <td>
+                {alerte["type"] or "-"}
+            </td>
+
+            <td>
+                {alerte["message"] or "-"}
+            </td>
+
+            <td>
+                {alerte["statut"] or "-"}
+            </td>
+
+        </tr>
+
+        """
+
+    content = f"""
+
+<div class="page-header">
+
+    <div class="tag">
+        Surveillance
+    </div>
+
+    <h1>
+        Alertes
+    </h1>
+
+    <p>
+        Les événements détectés par le système
+        sont centralisés ici.
+    </p>
+
+</div>
+
+
+<div class="stat-card"
+     style="margin-bottom:20px;">
+
+    <div class="stat-top">
+
+        <div class="stat-icon red">
+            🚨
+        </div>
+
+    </div>
+
+    <div class="stat-label">
+        Alertes enregistrées
+    </div>
+
+    <div class="stat-value">
+        {len(alertes_data)}
+    </div>
+
+</div>
+
+
+<div class="table-card">
+
+<table>
+
+<thead>
+
+<tr>
+
+    <th>Date</th>
+    <th>Salle</th>
+    <th>Équipement</th>
+    <th>Niveau</th>
+    <th>Type</th>
+    <th>Message</th>
+    <th>Statut</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{rows}
+
+</tbody>
+
+</table>
+
+</div>
+
+"""
+
+    return page_template(
+        "Alertes",
+        content,
+        "alertes"
+    )
+
+
+# ============================================================
+# OPTIMISATIONS
+# ============================================================
+
+@app.route("/optimisations")
+def optimisations():
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("""
+        SELECT
+            o.*,
+            s.nom AS salle,
+            e.nom AS equipement
+
+        FROM optimisations o
+
+        LEFT JOIN salles s
+            ON s.id = o.salle_id
+
+        LEFT JOIN equipements e
+            ON e.id = o.equipement_id
+
+        ORDER BY o.date_heure DESC
+
+        LIMIT 100
+    """)
+
+    optimisations_data = cur.fetchall()
+
+    db.close()
+
+    gain_total = sum(
+        safe_float(x["gain_estime"])
+        for x in optimisations_data
+    )
+
+    rows = ""
+
+    for optimisation in optimisations_data:
+
+        statut = str(
+            optimisation["statut"] or "-"
+        ).upper()
+
+        rows += f"""
+
+        <tr>
+
+            <td>
+                {format_date(optimisation["date_heure"])}
+            </td>
+
+            <td>
+                <strong>
+                    {optimisation["titre"] or "-"}
+                </strong>
+            </td>
+
+            <td>
+                {optimisation["salle"] or "-"}
+            </td>
+
+            <td>
+                {optimisation["equipement"] or "-"}
+            </td>
+
+            <td>
+                {optimisation["description"] or "-"}
+            </td>
+
+            <td>
+                <strong style="color:#15803d;">
+                    {safe_float(optimisation["gain_estime"]):.2f}
+                </strong>
+            </td>
+
+            <td>
+                <span class="badge badge-green">
+                    {statut}
+                </span>
+            </td>
+
+        </tr>
+
+        """
+
+    content = f"""
+
+<div class="page-header">
+
+    <div class="tag">
+        Intelligence énergétique
+    </div>
+
+    <h1>
+        Optimisations
+    </h1>
+
+    <p>
+        Les recommandations produites à partir de
+        l'analyse des consommations.
+    </p>
+
+</div>
+
+
+<div class="grid-3">
+
+    <div class="stat-card">
+
+        <div class="stat-icon green">
+            🧠
+        </div>
+
+        <div class="stat-label">
+            Recommandations
+        </div>
+
+        <div class="stat-value">
+            {len(optimisations_data)}
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-icon green">
+            ⚡
+        </div>
+
+        <div class="stat-label">
+            Gain estimé cumulé
+        </div>
+
+        <div class="stat-value">
+            {gain_total:.2f}
+        </div>
+
+    </div>
+
+
+    <div class="stat-card">
+
+        <div class="stat-icon dark">
+            📡
+        </div>
+
+        <div class="stat-label">
+            Source
+        </div>
+
+        <div style="
+            margin-top:10px;
+            font-size:13px;
+            font-weight:800;
+        ">
+            Analyse énergétique
+        </div>
+
+    </div>
+
+</div>
+
+
+<section class="section-title">
+
+    <h2>
+        Recommandations
+    </h2>
+
+</section>
+
+
+<div class="table-card">
+
+<table>
+
+<thead>
+
+<tr>
+
+    <th>Date</th>
+    <th>Recommandation</th>
+    <th>Salle</th>
+    <th>Équipement</th>
+    <th>Description</th>
+    <th>Gain</th>
+    <th>Statut</th>
+
+</tr>
+
+</thead>
+
+<tbody>
+
+{rows}
+
+</tbody>
+
+</table>
+
+</div>
+
+"""
+
+    return page_template(
+        "Optimisations",
+        content,
+        "optimisations"
+    )
+
+
+# ============================================================
+# ERREUR 404
+# ============================================================
+
+@app.errorhandler(404)
+def page_not_found(error):
+
+    content = """
+
+<div style="
+    min-height:500px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    text-align:center;
+">
+
+    <div>
+
+        <div style="
+            font-size:80px;
+            margin-bottom:20px;
+        ">
+            ⚡
+        </div>
+
+        <h1 style="
+            font-size:50px;
+            margin-bottom:10px;
+        ">
+            404
+        </h1>
+
+        <p style="
+            color:#718078;
+            margin-bottom:25px;
+        ">
+            Cette page n'existe pas.
+        </p>
+
+        <a href="/"
+           style="
+                display:inline-block;
+                padding:12px 20px;
+                border-radius:14px;
+                background:#16a34a;
+                color:white;
+                text-decoration:none;
+                font-weight:800;
+           ">
+            Retour à l'accueil
+        </a>
+
+    </div>
+
+</div>
+
+"""
+
+    return page_template(
+        "Page introuvable",
+        content,
+        "home"
+    ), 404
+
+
+# ============================================================
+# LANCEMENT
+# ============================================================
+
+if __name__ == "__main__":
+
+    app.run(
+        debug=True,
+        host="127.0.0.1",
+        port=5000
+    )

@@ -144,7 +144,7 @@ anomalies = []
 
 
 # Une mesure est considérée comme anormale
-# si elle dépasse de 20 % la puissance normale
+# si elle dépasse de 2 0 % la puissance normale
 # de son propre équipement.
 
 for date_heure, salle, equipement, puissance, energie in mesures:
