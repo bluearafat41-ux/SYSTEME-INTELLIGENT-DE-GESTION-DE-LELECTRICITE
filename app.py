@@ -392,6 +392,85 @@ small.mut{color:var(--muted)}
 .dg-arrow i{left:-3px;top:0;animation-name:dgrunv}
 }
 @media(max-width:650px){.dg-step{grid-template-columns:52px minmax(0,1fr);gap:0 12px}.dg-ico{width:52px;height:52px}.dg-ico svg{width:28px;height:28px}}
+
+/* ============================================================
+   AJOUT : cartes explicatives retournables (flip 3D, classes fl-)
+   ============================================================ */
+.fl{perspective:1200px;cursor:pointer;outline:none}
+.fl:focus-visible .fl-in>.card{outline:2px solid #16a89a;outline-offset:3px}
+.fl-in{display:grid;position:relative;height:100%;transform-style:preserve-3d;transition:transform .75s cubic-bezier(.2,.8,.2,1)}
+.fl.on .fl-in{transform:rotateY(180deg)}
+.fl-in>.card{grid-area:1/1;position:relative;backface-visibility:hidden;-webkit-backface-visibility:hidden}
+.fl-in>.card:not(.fl-back){padding-bottom:36px;transition:box-shadow .25s}
+.fl:hover .fl-in>.card:not(.fl-back){box-shadow:0 22px 44px rgba(14,95,85,.16)}
+.fl-hint{position:absolute;right:16px;bottom:11px;font-size:9px;font-weight:850;letter-spacing:.4px;color:var(--accent2);opacity:.75}
+.fl-in>.fl-back{transform:rotateY(180deg);color:#eafbf7;border-color:transparent;background:linear-gradient(145deg,#0d4a45,#14796d 60%,#1c9a86)}
+.fl-in>.fl-back h3{color:#fff}
+.fl-in>.fl-back p{color:#cdeee6;margin:10px 0 0;font-size:12px;line-height:1.55}
+.fl-row{display:flex;align-items:center;gap:14px;margin-top:12px}
+.fl-row b{display:block;font-size:13px;color:#fff}
+.fl-row span{display:block;font-size:11px;color:#cdeee6;margin-top:3px;line-height:1.5}
+.fl-ring{width:56px;height:56px;flex:0 0 56px}
+.fl-ring circle{fill:none;stroke-width:4;stroke-linecap:round}
+.fl-ring .bg{stroke:rgba(255,255,255,.25)}
+.fl-ring .fg{stroke:#9af0d0;stroke-dasharray:113;stroke-dashoffset:113;transform:rotate(-90deg);transform-origin:22px 22px}
+.fl.on .fl-ring .fg{animation:flring 3s ease-out forwards}
+@keyframes flring{to{stroke-dashoffset:0}}
+.fl-pulse{display:inline-block;margin-top:10px;padding:5px 10px;border-radius:14px;background:#dc2626;color:#fff;font-size:10px;font-weight:850;opacity:0}
+.fl.on .fl-pulse{animation:flshow .35s 3s forwards,flpulse 1.2s 3.35s infinite}
+@keyframes flshow{to{opacity:1}}
+@keyframes flpulse{0%,100%{box-shadow:0 0 0 0 rgba(220,38,38,.6)}50%{box-shadow:0 0 0 8px rgba(220,38,38,0)}}
+.fl-swap{position:relative;height:30px;margin-top:12px}
+.fl-swap .badge{position:absolute;left:0;top:0;font-size:11px;padding:7px 12px}
+.fl-swap .b2{opacity:0}
+.fl.on .fl-swap .b1{animation:flb1 4s ease-in-out infinite}
+.fl.on .fl-swap .b2{animation:flb2 4s ease-in-out infinite}
+@keyframes flb1{0%,35%{opacity:1;transform:none}45%,90%{opacity:0;transform:translateY(-8px)}100%{opacity:1;transform:none}}
+@keyframes flb2{0%,40%{opacity:0;transform:translateY(8px) scale(.9)}50%,90%{opacity:1;transform:none}100%{opacity:0;transform:translateY(8px) scale(.9)}}
+.fl-bars{display:grid;gap:12px;margin-top:12px}
+.fl-bars .t{display:flex;justify-content:space-between;font-size:11px;font-weight:800;color:#fff;margin-bottom:5px}
+.fl-bar{height:9px;border-radius:9px;background:rgba(255,255,255,.2);overflow:hidden}
+.fl-bar i{display:block;height:100%;width:0;border-radius:9px}
+.fl.on .fl-bar i{animation:flfill 1.6s .2s cubic-bezier(.2,.8,.2,1) forwards}
+@keyframes flfill{to{width:var(--w)}}
+.fl-ex{display:grid;gap:10px;margin-top:12px}
+.fl-ex div{display:flex;align-items:center;gap:8px;font-size:11px;color:#fff}
+.fl-ex b{padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.18);font-size:10px}
+.fl-ex i{display:block;height:2px;width:0;background:#9af0d0;border-radius:2px}
+.fl.on .fl-ex i{animation:flarrow 1s .3s ease-out forwards}
+.fl.on .fl-ex div:nth-child(2) i{animation-delay:.9s}
+@keyframes flarrow{to{width:26px}}
+.fl-chain div{flex-wrap:wrap;row-gap:8px}
+.fl.on .fl-chain i:nth-of-type(2){animation-delay:.9s}
+.fl.on .fl-chain i:nth-of-type(3){animation-delay:1.5s}
+.fl-in>.feat{grid-area:1/1;position:relative;backface-visibility:hidden;-webkit-backface-visibility:hidden;padding-bottom:36px}
+.fl-in>.fl-fback{grid-area:1/1;position:relative;transform:rotateY(180deg);backface-visibility:hidden;-webkit-backface-visibility:hidden;padding:20px;border-radius:22px;color:#eafbf7;background:linear-gradient(145deg,#0d4a45,#14796d 60%,#1c9a86);box-shadow:var(--shadow)}
+.fl-fback h3{font-size:15px;color:#fff}
+.fl-fback p{margin-top:10px;font-size:12px;line-height:1.55;color:#cdeee6}
+.fl-go{display:inline-block;margin-top:12px;padding:8px 14px;border-radius:11px;background:#fff;color:#0f766e;font-size:11px;font-weight:850;text-decoration:none}
+.fl-floors{display:grid;gap:4px;width:64px;flex:0 0 64px}
+.fl-floors i{display:block;height:11px;border-radius:3px;background:rgba(255,255,255,.25)}
+.fl.on .fl-floors i{animation:flfloor 3.2s ease-in-out infinite}
+.fl.on .fl-floors i:nth-child(4){animation-delay:0s}
+.fl.on .fl-floors i:nth-child(3){animation-delay:.6s}
+.fl.on .fl-floors i:nth-child(2){animation-delay:1.2s}
+.fl.on .fl-floors i:nth-child(1){animation-delay:1.8s}
+@keyframes flfloor{0%,100%{background:rgba(255,255,255,.25)}12%,30%{background:#9af0d0}}
+.fl-line{width:130px;height:44px;margin-top:10px;display:block}
+.fl-line polyline{fill:none;stroke:#9af0d0;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:200;stroke-dashoffset:200}
+.fl.on .fl-line polyline{animation:flline 2s ease-out forwards}
+@keyframes flline{to{stroke-dashoffset:0}}
+.fl-dots{display:flex;gap:9px;margin-top:14px}
+.fl-dots i{display:block;width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.25)}
+.fl.on .fl-dots i{animation:fldot 2.4s ease-in-out infinite}
+.fl.on .fl-dots i:nth-child(2){animation-delay:.2s}
+.fl.on .fl-dots i:nth-child(3){animation-delay:.4s}
+.fl.on .fl-dots i:nth-child(4){animation-delay:.6s}
+.fl.on .fl-dots i:nth-child(5){animation-delay:.8s}
+.fl.on .fl-dots i:nth-child(6){animation-delay:1s}
+@keyframes fldot{0%,100%{background:rgba(255,255,255,.25);transform:scale(1)}15%{background:#9af0d0;transform:scale(1.6)}30%{background:rgba(255,255,255,.25);transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){.fl-line polyline{stroke-dashoffset:0}}
+@media(prefers-reduced-motion:reduce){.fl-ring .fg{stroke-dashoffset:0}.fl-pulse{opacity:1}.fl-bar i{width:var(--w)}.fl-ex i{width:26px}.fl-swap .b2{opacity:1}.fl-swap .b1{display:none}}
 """
 
 LAYOUT = """<!DOCTYPE html>
@@ -401,6 +480,7 @@ LAYOUT = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>__TITLE__ — Smart Energy Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>var PAL=["#168b83","#26a997","#5fd0bc","#0f766e","#7cc8d8","#f59e0b","#6366f1","#ef4444"];</script>
 <style>__CSS__</style>
 </head>
 <body>
@@ -607,6 +687,108 @@ def diagramme_salle(nb_equipements=0):
 
 
 # ============================================================
+# AJOUT : CARTES EXPLICATIVES RETOURNABLES (flip au clic)
+# ============================================================
+
+FLIP_BACKS = {
+    "alt-marche": ('<h3>En direct</h3><div class="fl-row"><svg class="fl-ring" viewBox="0 0 44 44">'
+                   '<circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18"/></svg>'
+                   '<div><b>Analyse toutes les 10 min</b><span>Chaque mesure est comparée à la puissance normale.</span></div></div>'
+                   '<span class="fl-pulse">&gt; 120 % : ALERTE CRÉÉE</span>'),
+    "alt-traiter": ('<h3>Avant / après</h3><div class="fl-swap"><span class="badge badge-red b1">ACTIVE</span>'
+                    '<span class="badge badge-green b2">✓ TRAITÉE</span></div>'
+                    '<p>Vous vérifiez l\'équipement : l\'alerte passe en TRAITÉE. Si l\'anomalie revient, une nouvelle alerte peut être créée.</p>'),
+    "alt-niveaux": ('<h3>Jusqu\'où va l\'alerte ?</h3><div class="fl-bars">'
+                    '<div><div class="t"><span>ÉLEVÉ</span><span>&gt; 120 %</span></div><div class="fl-bar"><i style="--w:66%;background:#f59e0b"></i></div></div>'
+                    '<div><div class="t"><span>TRÈS ÉLEVÉ</span><span>≥ 180 %</span></div><div class="fl-bar"><i style="--w:100%;background:#ef4444"></i></div></div></div>'),
+    "opt-source": ('<h3>Exemples de conseils</h3><div class="fl-ex">'
+                   '<div><b>Climatiseur</b><i></i><span>conseil dédié</span></div>'
+                   '<div><b>Éclairage</b><i></i><span>conseil dédié</span></div></div>'
+                   '<p>Le conseil dépend du type d\'équipement concerné par l\'alerte.</p>'),
+    "opt-gain": ('<h3>Gain estimé</h3><div class="fl-bars">'
+                 '<div><div class="t"><span>Alerte ÉLEVÉE</span><span>−<b data-to="10">0</b> %</span></div><div class="fl-bar"><i style="--w:50%;background:#9af0d0"></i></div></div>'
+                 '<div><div class="t"><span>Alerte TRÈS ÉLEVÉE</span><span>−<b data-to="20">0</b> %</span></div><div class="fl-bar"><i style="--w:100%;background:#9af0d0"></i></div></div></div>'
+                 '<p>Une estimation, pas une économie mesurée.</p>'),
+    "opt-appliquer": ('<h3>Suivi d\'avancement</h3><div class="fl-swap"><span class="badge badge-orange b1">EN ATTENTE</span>'
+                      '<span class="badge badge-green b2">✓ APPLIQUÉE</span></div>'
+                      '<p>Une fois l\'action réalisée, vous cliquez sur Appliquer pour suivre votre avancement.</p>'),
+    "home-flux": ('<h3>Le parcours d\'une mesure</h3><div class="fl-ex fl-chain"><div>'
+                  '<b>Mesure</b><i></i><b>Analyse</b><i></i><b>Alerte</b><i></i><b>Conseil</b></div></div>'
+                  '<p>Chaque mesure devient une action concrète, en continu.</p>'),
+    "home-seuil": ('<h3>Où se place le seuil ?</h3><div class="fl-bars">'
+                   '<div><div class="t"><span>Puissance normale</span><span>100 %</span></div><div class="fl-bar"><i style="--w:55%;background:#9af0d0"></i></div></div>'
+                   '<div><div class="t"><span>Seuil d\'anomalie</span><span>120 %</span></div><div class="fl-bar"><i style="--w:66%;background:#f59e0b"></i></div></div>'
+                   '<div><div class="t"><span>TRÈS ÉLEVÉ</span><span>≥ 180 %</span></div><div class="fl-bar"><i style="--w:100%;background:#ef4444"></i></div></div></div>'
+                   '<span class="fl-pulse">&gt; 120 % : ALERTE</span>'),
+    "ft-bat": ('<h3>Bâtiment 3D</h3><div class="fl-row"><div class="fl-floors"><i></i><i></i><i></i><i></i></div>'
+               '<div><b>4 étages à explorer</b><span>Cliquez un étage pour voir ses salles et leur consommation.</span></div></div>'
+               '<a class="fl-go" href="/connexion">Se connecter pour y accéder</a>'),
+    "ft-his": ('<h3>Historique</h3><svg class="fl-line" viewBox="0 0 120 40"><polyline points="2,32 22,24 42,28 62,14 82,20 102,6 118,12"/></svg>'
+               '<p>Toutes les mesures, regroupées par minute, heure ou jour.</p>'
+               '<a class="fl-go" href="/connexion">Se connecter pour y accéder</a>'),
+    "ft-cmp": ('<h3>Comparaisons</h3><div class="fl-bars">'
+               '<div><div class="t"><span>Salle A</span><span>exemple</span></div><div class="fl-bar"><i style="--w:90%;background:#9af0d0"></i></div></div>'
+               '<div><div class="t"><span>Salle B</span><span></span></div><div class="fl-bar"><i style="--w:60%;background:#9af0d0"></i></div></div>'
+               '<div><div class="t"><span>Salle C</span><span></span></div><div class="fl-bar"><i style="--w:35%;background:#9af0d0"></i></div></div></div>'
+               '<p>Repérez les salles et les équipements les plus gourmands.</p>'
+               '<a class="fl-go" href="/connexion">Se connecter pour y accéder</a>'),
+    "ft-alt": ('<h3>Alertes</h3><div class="fl-swap"><span class="badge badge-red b1">ACTIVE</span>'
+               '<span class="badge badge-green b2">✓ TRAITÉE</span></div>'
+               '<p>Une surconsommation crée une alerte : vous la traitez d\'un clic.</p>'
+               '<a class="fl-go" href="/connexion">Se connecter pour y accéder</a>'),
+    "ft-opt": ('<h3>Optimisations</h3><div class="fl-bars"><div><div class="t"><span>Gain estimé, jusqu\'à</span><span>−<b data-to="20">0</b> %</span></div>'
+               '<div class="fl-bar"><i style="--w:100%;background:#9af0d0"></i></div></div></div>'
+               '<p>Chaque alerte produit un conseil concret à appliquer.</p>'
+               '<a class="fl-go" href="/connexion">Se connecter pour y accéder</a>'),
+    "ft-sim": ('<h3>Simulation en continu</h3><div class="fl-dots"><i></i><i></i><i></i><i></i><i></i><i></i></div>'
+               '<p>Une mesure toutes les 2 minutes sur chaque équipement.</p>'
+               '<a class="fl-go" href="/connexion">Se connecter pour y accéder</a>'),
+}
+
+FLIP_JS = """<script>
+(function(){
+var B=__B__;
+function count(root){root.querySelectorAll("[data-to]").forEach(function(e){
+ var to=parseFloat(e.getAttribute("data-to"))||0,t0=performance.now();
+ (function s(t){var p=Math.min((t-t0)/1400,1);e.textContent=Math.round(to*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(s)})(t0)})}
+document.querySelectorAll("[data-flip]").forEach(function(card){
+ var k=card.getAttribute("data-flip");if(!B[k])return;
+ var isCard=card.classList.contains("card");
+ var w=document.createElement("div");w.className=isCard?"fl rise":"fl";w.tabIndex=0;
+ w.setAttribute("role","button");w.setAttribute("aria-pressed","false");
+ card.parentNode.insertBefore(w,card);
+ if(isCard)card.classList.remove("rise");
+ card.removeAttribute("data-flip");
+ var hint=document.createElement("span");hint.className="fl-hint";hint.textContent="↻ Cliquer pour retourner";card.appendChild(hint);
+ if(card.tagName==="A"){card.tabIndex=-1;card.addEventListener("click",function(e){e.preventDefault()})}
+ var back=document.createElement("div");back.className=isCard?"card fl-back":"fl-fback";back.innerHTML=B[k];
+ back.querySelectorAll("a").forEach(function(a){a.addEventListener("click",function(e){e.stopPropagation()})});
+ var inn=document.createElement("div");inn.className="fl-in";inn.appendChild(card);inn.appendChild(back);w.appendChild(inn);
+ function toggle(){var on=w.classList.toggle("on");w.setAttribute("aria-pressed",on?"true":"false");if(on)count(back)}
+ w.addEventListener("click",toggle);
+ w.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle()}});
+});
+})();
+</script>"""
+
+
+def flip_js():
+    return fill(FLIP_JS, B=json_data(FLIP_BACKS))
+
+
+FEAT_FLIP = {"3D": "ft-bat", "HIS": "ft-his", "VS": "ft-cmp", "ALT": "ft-alt", "OPT": "ft-opt", "SIM": "ft-sim"}
+
+
+def features_flip_html():
+    """Cartes modules de l'accueil visiteur (liens vers /connexion), retournables au clic."""
+    h = features_html(liens=False)
+    for mark, cle in FEAT_FLIP.items():
+        h = h.replace(f'<a class="feat" href="/connexion"><div class="fi">{mark}</div>',
+                      f'<a class="feat" data-flip="{cle}" href="/connexion"><div class="fi">{mark}</div>', 1)
+    return h
+
+
+# ============================================================
 # BLOCS RÉUTILISABLES DE L'ACCUEIL
 # ============================================================
 
@@ -690,9 +872,13 @@ def home():
             '<div class="orbs"><span></span><span></span><span></span><b>SE</b></div></section>'
             '<div class="section-title"><h2>Ce que fait le système</h2>'
             '<p>Six modules, accessibles après connexion.</p></div>'
-            + features_html(liens=False) +
+            + features_flip_html() +
             '<div class="section-title"><h2>Comment ça fonctionne</h2></div>'
-            '<div class="main2">' + pipeline_html() + gauge_html() + '</div>'
+            '<div class="main2">'
+            + pipeline_html().replace('<div class="card rise">', '<div class="card rise" data-flip="home-flux">', 1)
+            + gauge_html().replace('<div class="card rise">', '<div class="card rise" data-flip="home-seuil">', 1)
+            + '</div>'
+            + flip_js()
         )
         return page_template("Bienvenue", content, "home")
 
@@ -810,11 +996,11 @@ def salle(salle_id):
         + stat("Équipements", len(equipements))
         + stat("Localisation", esc(s["localisation"] or "-"))
         + '</div>'
+        + diagramme_salle(len(equipements)) +
         '<div class="grid-2"><div class="chart-card"><h3>Évolution de la consommation</h3>'
         '<p>30 dernières mesures.</p><div class="chart-container"><canvas id="roomLine"></canvas></div></div>'
         '<div class="chart-card"><h3>Consommation par équipement</h3><p>Répartition de l\'énergie.</p>'
         '<div class="chart-container"><canvas id="roomPie"></canvas></div></div></div>'
-        + diagramme_salle(len(equipements)) +
         '<div class="section-title"><h2>Équipements</h2></div>'
         '<div class="table-card"><table><thead><tr><th>Équipement</th><th>Type</th><th>État</th>'
         f'<th>Puissance moyenne</th><th>Énergie</th></tr></thead><tbody>{rows}</tbody></table></div>'
@@ -1209,17 +1395,17 @@ def alertes():
         + stat("Traitées", traitees, "", "ok")
         + stat("Très élevées", critiques, "", "warn", "Puissance ≥ 180 % de la normale")
         + '</div><div class="grid-3" style="margin-bottom:18px">'
-        '<div class="card rise"><h3>Comment ça marche</h3><p>Toutes les 10 minutes, les mesures récentes sont comparées à la puissance normale de chaque équipement. '
+        '<div class="card rise" data-flip="alt-marche"><h3>Comment ça marche</h3><p>Toutes les 10 minutes, les mesures récentes sont comparées à la puissance normale de chaque équipement. '
         'Au-delà de 120 %, une alerte est créée.</p></div>'
-        '<div class="card rise"><h3>Que signifie « Traiter » ?</h3><p>Vous confirmez avoir vérifié l\'équipement. L\'alerte passe en TRAITÉE, '
+        '<div class="card rise" data-flip="alt-traiter"><h3>Que signifie « Traiter » ?</h3><p>Vous confirmez avoir vérifié l\'équipement. L\'alerte passe en TRAITÉE, '
         'et une nouvelle alerte pourra être créée si l\'anomalie revient.</p></div>'
-        '<div class="card rise"><h3>Niveaux de gravité</h3><p><span class="badge badge-orange">ÉLEVÉ</span> dépasse le seuil de 120 %.<br><br>'
+        '<div class="card rise" data-flip="alt-niveaux"><h3>Niveaux de gravité</h3><p><span class="badge badge-orange">ÉLEVÉ</span> dépasse le seuil de 120 %.<br><br>'
         '<span class="badge badge-red">TRÈS ÉLEVÉ</span> atteint 180 % de la puissance normale.</p></div></div>'
+        + diagramme_alertes() +
         '<div class="grid-2"><div class="chart-card"><h3>Répartition par niveau</h3><p>Gravité des alertes enregistrées.</p>'
         '<div class="chart-container"><canvas id="nivChart"></canvas></div></div>'
         '<div class="chart-card"><h3>Équipements les plus concernés</h3><p>Nombre d\'alertes par type d\'équipement.</p>'
         '<div class="chart-container"><canvas id="eqChart"></canvas></div></div></div>'
-        + diagramme_alertes() +
         '<div class="section-title"><h2>Liste des alertes</h2><p>200 plus récentes maximum.</p></div>'
         + tabs + tout +
         '<div class="table-card"><table><thead><tr><th>N°</th><th>Date</th><th>Salle</th><th>Équipement</th><th>Niveau</th>'
@@ -1227,6 +1413,7 @@ def alertes():
         + fill(ALERT_JS,
                NL=json_data([x["niveau"] for x in niveaux]), NV=json_data([x["n"] for x in niveaux]),
                EL=json_data([x["nom"] for x in par_equip]), EV=json_data([x["n"] for x in par_equip]))
+        + flip_js()
     )
     return page_template("Alertes", content, "alertes")
 
@@ -1310,21 +1497,22 @@ def optimisations():
         + stat("Appliquées", appliquees, "", "ok")
         + stat("Gain moyen estimé", safe_float(gain_moy), "%", "ok", "Estimation indicative", 1)
         + '</div><div class="grid-3" style="margin-bottom:18px">'
-        '<div class="card rise"><h3>D\'où viennent ces conseils ?</h3><p>Pour chaque alerte, le système associe un conseil adapté au type d\'équipement concerné (climatiseur, éclairage, etc.).</p></div>'
-        '<div class="card rise"><h3>Que signifie le gain ?</h3><p>C\'est un potentiel d\'économie estimé : 10 % pour une alerte ÉLEVÉE, 20 % pour une alerte TRÈS ÉLEVÉE. '
+        '<div class="card rise" data-flip="opt-source"><h3>D\'où viennent ces conseils ?</h3><p>Pour chaque alerte, le système associe un conseil adapté au type d\'équipement concerné (climatiseur, éclairage, etc.).</p></div>'
+        '<div class="card rise" data-flip="opt-gain"><h3>Que signifie le gain ?</h3><p>C\'est un potentiel d\'économie estimé : 10 % pour une alerte ÉLEVÉE, 20 % pour une alerte TRÈS ÉLEVÉE. '
         'Ce n\'est pas une économie mesurée après intervention.</p></div>'
-        '<div class="card rise"><h3>Que fait « Appliquer » ?</h3><p>Vous indiquez que l\'action a été réalisée. La recommandation passe en APPLIQUÉE pour suivre votre avancement.</p></div></div>'
+        '<div class="card rise" data-flip="opt-appliquer"><h3>Que fait « Appliquer » ?</h3><p>Vous indiquez que l\'action a été réalisée. La recommandation passe en APPLIQUÉE pour suivre votre avancement.</p></div></div>'
+        + diagramme_optimisations() +
         '<div class="grid-2"><div class="chart-card"><h3>Recommandations par équipement</h3><p>Équipements qui génèrent le plus de conseils.</p>'
         '<div class="chart-container"><canvas id="optChart"></canvas></div></div>'
         '<div class="chart-card"><h3>Avancement</h3><p>Recommandations en attente et appliquées.</p>'
         '<div class="chart-container"><canvas id="statChart"></canvas></div></div></div>'
-        + diagramme_optimisations() +
         '<div class="section-title"><h2>Recommandations</h2><p>100 plus récentes maximum.</p></div>'
         '<div class="table-card"><table><thead><tr><th>Date</th><th>Recommandation</th><th>Salle</th><th>Équipement</th>'
         f'<th>Action conseillée</th><th>Gain estimé</th><th>Statut</th><th>Action</th></tr></thead><tbody>{rows}</tbody></table></div>'
         + fill(OPT_JS,
                L=json_data([x["nom"] for x in par_equip]), V=json_data([x["n"] for x in par_equip]),
                S=json_data([attente, appliquees]))
+        + flip_js()
     )
     return page_template("Optimisations", content, "optimisations")
 
