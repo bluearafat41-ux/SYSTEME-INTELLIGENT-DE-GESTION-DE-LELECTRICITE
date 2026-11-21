@@ -1,4 +1,4 @@
-from flask import Flask, abort, request, redirect, url_for, session, jsonify
+from flask import Flask, abort, request, redirect, url_for, session, jsonify, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 from markupsafe import escape as esc          # protège contre l'injection HTML
 import secrets
@@ -18,6 +18,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     PERMANENT_SESSION_LIFETIME=timedelta(days=7),
+    MAX_CONTENT_LENGTH=3 * 1024 * 1024,  # photos de profil : 2 Mo + marge
 )
 
 # ============================================================
@@ -48,6 +49,11 @@ def init_auth_db():
                 date_creation TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # colonnes du profil (ajoutées si elles manquent : ta base existante est conservée)
+        colonnes = [r[1] for r in db.execute("PRAGMA table_info(utilisateurs)")]
+        for col in ("photo", "telephone", "poste"):
+            if col not in colonnes:
+                db.execute(f"ALTER TABLE utilisateurs ADD COLUMN {col} TEXT")
 
 
 init_auth_db()
@@ -565,12 +571,12 @@ def page_template(title, content, active="home"):
         cls = "active" if key == active else ""
         menu += f'<a href="{href}" class="{cls}"><span class="nav-mark">{mark}</span> {label}</a>'
     if connecte:
-        auth = ('<a class="toolbar-button" href="/compte">Mon compte</a>'
+        auth = (profil_chip() +
                 '<a class="toolbar-button logout-link" href="/deconnexion">Déconnexion</a>')
     else:
         auth = ('<a class="toolbar-button" href="/connexion">Connexion</a>'
                 '<a class="toolbar-button signup-link" href="/inscription">Inscription</a>')
-    return fill(LAYOUT, TITLE=esc(title), CSS=CSS, MENU=menu, AUTH=auth,
+    return fill(LAYOUT, TITLE=esc(title), CSS=CSS + PROFIL_CSS, MENU=menu, AUTH=auth,
                 NOTE=PAGE_NOTES.get(active, "Espace de gestion Smart Energy Monitor."),
                 CONTENT=content)
 
@@ -857,6 +863,304 @@ setInterval(refresh,10000);
 """
 
 
+# ============================================================
+# MAQUETTE 3D DE L'ACCUEIL : 4 étages transparents, salles colorées selon
+# l'alerte. Un clic sur une salle RETOURNE la carte et affiche ses informations
+# (alertes, optimisations, graphique de consommation). Tout est préfixé #sem3d.
+# ============================================================
+
+BAT3D_HTML = """
+<style>
+#sem3d{--ok:#5eead4;--warn:#f59e0b;--bad:#ef4444;--txt:#e6f4f1;--mut:#8fb0aa;--line:#1f3d37;margin:22px 0;color:var(--txt)}
+#sem3d *{box-sizing:border-box}
+#sem3d .flip{perspective:1600px}
+#sem3d .flip-in{display:grid;position:relative;transform-style:preserve-3d;transition:transform .8s cubic-bezier(.2,.8,.2,1)}
+#sem3d .flip.on .flip-in{transform:rotateY(180deg)}
+#sem3d .face{grid-area:1/1;backface-visibility:hidden;-webkit-backface-visibility:hidden;background:#10231f;border:1px solid var(--line);border-radius:22px;overflow:hidden;box-shadow:var(--shadow)}
+#sem3d .front{position:relative}
+#sem3d .back{transform:rotateY(180deg);padding:22px;background:linear-gradient(145deg,#0c1d1a,#10302b)}
+#sem3d .flip:not(.on) .back{pointer-events:none}
+#sem3d .flip.on .front{pointer-events:none}
+#sem3d .vue{position:relative;height:640px;cursor:grab;touch-action:none}
+#sem3d .vue:active{cursor:grabbing}
+#sem3d .vue canvas{display:block;width:100%;height:100%}
+#sem3d .etages{position:absolute;left:14px;top:14px;display:flex;gap:6px;flex-wrap:wrap;z-index:2}
+#sem3d .etages button{background:#0c1d1a;color:var(--mut);border:1px solid var(--line);border-radius:10px;padding:6px 12px;font:600 12px "Segoe UI",system-ui,sans-serif;cursor:pointer}
+#sem3d .etages button:hover{color:var(--txt)}
+#sem3d .etages button:focus-visible{outline:2px solid var(--ok);outline-offset:2px}
+#sem3d .etages button.on{background:var(--ok);color:#052e29;border-color:var(--ok)}
+#sem3d .aide{position:absolute;left:14px;bottom:12px;font-size:12px;color:var(--mut)}
+#sem3d .legende{position:absolute;right:14px;bottom:12px;display:flex;gap:12px;font-size:12px;color:var(--mut)}
+#sem3d .legende i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+#sem3d .bk-head{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+#sem3d .bk-head h3{margin:0;font-size:22px;color:var(--txt)}
+#sem3d .bk-head .sub{color:var(--mut);font-size:13px;margin-top:2px}
+#sem3d .bk-btn{background:#0c1d1a;color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:9px 14px;font:700 12px "Segoe UI",system-ui,sans-serif;cursor:pointer;text-decoration:none;display:inline-block}
+#sem3d .bk-btn:hover{border-color:var(--ok);color:var(--ok)}
+#sem3d .bk-lien{margin-left:auto}
+#sem3d .bk-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+#sem3d .bk-st{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:#0c1d1a}
+#sem3d .bk-st small{display:block;color:var(--mut);font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:800}
+#sem3d .bk-st b{display:block;margin-top:4px;font-size:22px;color:var(--ok)}
+#sem3d .bk-grid{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:12px}
+#sem3d .bk-box{border:1px solid var(--line);border-radius:14px;padding:14px;background:#0c1d1a;min-width:0}
+#sem3d .bk-box h4{margin:0 0 10px;font-size:14px;color:var(--txt)}
+#sem3d .bk-box h4 span{color:var(--mut);font-size:11px;font-weight:600;margin-left:6px}
+#sem3d .bk-it{padding:9px 0;border-top:1px solid var(--line);font-size:12px}
+#sem3d .bk-it:first-child{border-top:0;padding-top:0}
+#sem3d .bk-l{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#sem3d .bk-it small{display:block;margin-top:4px;color:var(--mut);font-size:11px;line-height:1.5}
+#sem3d .bdg{display:inline-block;padding:3px 8px;border-radius:10px;font-size:9px;font-weight:850;color:#10231f}
+#sem3d .bk-s{margin-left:auto;color:var(--mut);font-size:11px}
+#sem3d .bk-vide{padding:22px 8px;text-align:center;color:var(--mut);font-size:13px}
+#sem3d .bk-cv{position:relative;height:230px}
+@media(max-width:900px){#sem3d .bk-grid{grid-template-columns:1fr}}
+@media(max-width:720px){#sem3d .vue{height:480px}#sem3d .bk-stats{grid-template-columns:1fr}}
+</style>
+<section id="sem3d" aria-label="Maquette 3D du bâtiment">
+ <div class="flip" id="sem3dFlip">
+  <div class="flip-in">
+   <div class="face front">
+    <div class="vue" id="sem3dVue">
+     <div class="etages" id="sem3dEtages"></div>
+     <div class="aide">Glisser pour tourner · molette pour zoomer · cliquer sur une salle pour voir ses informations</div>
+     <div class="legende"><span><i style="background:var(--ok)"></i>Normal</span><span><i style="background:var(--warn)"></i>Élevé</span><span><i style="background:var(--bad)"></i>Très élevé</span></div>
+    </div>
+   </div>
+   <div class="face back">
+    <div class="bk-head">
+     <button class="bk-btn" id="sem3dRetour" type="button">← Retour au bâtiment</button>
+     <div><h3 id="bkNom">Salle</h3><div class="sub" id="bkSub"></div></div>
+     <a class="bk-btn bk-lien" id="bkLien" href="#">Ouvrir la page de la salle</a>
+    </div>
+    <div class="bk-stats" id="bkStats"></div>
+    <div class="bk-grid">
+     <div class="bk-box"><h4 id="bkAlH">Alertes</h4><div id="bkAl"></div></div>
+     <div class="bk-box"><h4 id="bkOpH">Optimisations</h4><div id="bkOp"></div></div>
+     <div class="bk-box"><h4>Consommation (24 dernières heures)</h4><div class="bk-cv" id="bkCh"></div></div>
+    </div>
+   </div>
+  </div>
+ </div>
+</section>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+var vue=document.getElementById("sem3dVue"),flip=document.getElementById("sem3dFlip");
+if(!vue)return;
+if(!window.THREE){vue.insertAdjacentHTML("beforeend","<div style='padding:40px;color:#8fb0aa'>La maquette 3D n'a pas pu être chargée.</div>");return}
+var DATA=__DATA__,INFO=__INFO__;
+var NOMS=["Rez-de-chaussée","1er étage","2e étage","3e étage"];
+var COL=[0x5eead4,0xf59e0b,0xef4444],CSSC=["#5eead4","#f59e0b","#ef4444"],LIB=["NORMAL","ÉLEVÉ","TRÈS ÉLEVÉ"];
+function esc(t){return String(t==null?"":t).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
+
+/* ===== SCÈNE ===== */
+var scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(40,1,.1,200),renderer;
+try{renderer=new THREE.WebGLRenderer({antialias:true,alpha:true})}
+catch(e){vue.insertAdjacentHTML("beforeend","<div style='padding:40px;color:#8fb0aa'>WebGL n'est pas disponible sur cet appareil.</div>");return}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+vue.prepend(renderer.domElement);
+scene.add(new THREE.AmbientLight(0xffffff,.7));
+var sun=new THREE.DirectionalLight(0xffffff,.7);sun.position.set(6,14,8);scene.add(sun);
+
+/* 4 étages au même périmètre, bien écartés ; les salles se partagent ce périmètre */
+var PAS=3.3,RH=1.8,WT=8.3,DT=6.3,GAP=.15;
+var nmax=1;DATA.forEach(function(f){nmax=Math.max(nmax,f.length)});
+var cols=nmax<=4?2:Math.ceil(Math.sqrt(nmax)),rows=Math.ceil(nmax/cols);
+var rw=(WT-GAP*(cols+1))/cols,rd=(DT-GAP*(rows+1))/rows;
+var bat=new THREE.Group();scene.add(bat);
+var groupes=[],salles=[],sel=null,filtre=-1;
+
+for(var i=0;i<4;i++){
+ var g=new THREE.Group();g.position.y=i*PAS;bat.add(g);groupes.push(g);
+ var dalle=new THREE.Mesh(new THREE.BoxGeometry(WT,.12,DT),new THREE.MeshStandardMaterial({color:0x1b4a42,transparent:true,opacity:.85}));
+ dalle.position.y=-.06;g.add(dalle);
+ (DATA[i]||[]).forEach(function(s,j){
+  var c=j%cols,r=Math.floor(j/cols);
+  var x=-WT/2+GAP+rw/2+c*(rw+GAP),z=-DT/2+GAP+rd/2+r*(rd+GAP);
+  var mat=new THREE.MeshStandardMaterial({color:COL[s.niv],transparent:true,opacity:.22,depthWrite:false,side:THREE.DoubleSide});
+  var m=new THREE.Mesh(new THREE.BoxGeometry(rw,RH,rd),mat);
+  m.position.set(x,RH/2,z);g.add(m);
+  var arete=new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry),new THREE.LineBasicMaterial({color:COL[s.niv],transparent:true,opacity:.9}));
+  m.add(arete);
+  salles.push({mesh:m,mat:mat,arete:arete,id:s.id,niv:s.niv,etage:i});
+ });
+}
+function centrer(){bat.position.y=filtre<0?-(3*PAS+RH)/2:-(filtre*PAS+RH/2)}
+
+/* ===== INTERACTION ===== */
+var rotY=-.6,rotX=.45,zoom=26;
+function cam(){camera.position.set(Math.sin(rotY)*Math.cos(rotX)*zoom,Math.sin(rotX)*zoom,Math.cos(rotY)*Math.cos(rotX)*zoom);camera.lookAt(0,0,0)}
+function taille(){var w=vue.clientWidth,h=vue.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}
+new ResizeObserver(taille).observe(vue);
+
+var drag=null,bouge=0;
+vue.addEventListener("pointerdown",function(e){if(e.target.closest("button"))return;drag={x:e.clientX,y:e.clientY};bouge=0;vue.setPointerCapture(e.pointerId)});
+vue.addEventListener("pointermove",function(e){
+ if(!drag)return;
+ var dx=e.clientX-drag.x,dy=e.clientY-drag.y;bouge+=Math.abs(dx)+Math.abs(dy);
+ rotY-=dx*.008;rotX=Math.max(.05,Math.min(1.35,rotX+dy*.006));drag={x:e.clientX,y:e.clientY}});
+vue.addEventListener("pointerup",function(e){
+ var etait=drag;drag=null;
+ if(etait&&bouge<6&&!e.target.closest("button"))choisir(e)});
+vue.addEventListener("wheel",function(e){e.preventDefault();zoom=Math.max(12,Math.min(42,zoom+e.deltaY*.03))},{passive:false});
+
+var ray=new THREE.Raycaster(),pt=new THREE.Vector2();
+function choisir(e){
+ var r=renderer.domElement.getBoundingClientRect();
+ pt.set(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1);
+ ray.setFromCamera(pt,camera);
+ var cibles=salles.filter(function(s){return filtre<0||s.etage===filtre}).map(function(s){return s.mesh});
+ var hit=ray.intersectObjects(cibles)[0];
+ if(hit){
+  var s=salles.filter(function(x){return x.mesh===hit.object})[0];
+  if(s)ouvrir(s);
+ }
+}
+
+/* ===== VERSO DE LA CARTE : informations de la salle ===== */
+var chart=null;
+function listeAlertes(a){
+ if(!a.length)return "<div class='bk-vide'>Aucune alerte</div>";
+ return a.map(function(x){
+  var c=x.niveau==="TRÈS ÉLEVÉ"?CSSC[2]:x.niveau==="ÉLEVÉ"?CSSC[1]:CSSC[0];
+  return "<div class='bk-it'><div class='bk-l'><span class='bdg' style='background:"+c+"'>"+esc(x.niveau)+"</span><b>"+esc(x.equipement||"-")+"</b><span class='bk-s'>"+(x.active?"Active":"Traitée")+"</span></div><small>"+esc(x.date)+" · "+esc(x.message)+"</small></div>";
+ }).join("");
+}
+function listeOptim(o){
+ if(!o.length)return "<div class='bk-vide'>Aucune optimisation</div>";
+ return o.map(function(x){
+  return "<div class='bk-it'><div class='bk-l'><span class='bdg' style='background:"+(x.attente?CSSC[1]:CSSC[0])+"'>-"+esc(x.gain)+" %</span><b>"+esc(x.titre||"-")+"</b><span class='bk-s'>"+(x.attente?"En attente":"Appliquée")+"</span></div><small>"+esc(x.equipement||"-")+" · "+esc(x.date)+"</small></div>";
+ }).join("");
+}
+function tracer(d){
+ var box=document.getElementById("bkCh");
+ if(chart){chart.destroy();chart=null}
+ if(!d.serie.v.length){box.innerHTML="<div class='bk-vide'>Aucune mesure sur les 24 dernières heures</div>";return}
+ box.innerHTML="<canvas id='bkChart'></canvas>";
+ if(!window.Chart)return;
+ chart=new Chart(document.getElementById("bkChart"),{type:"line",
+  data:{labels:d.serie.l,datasets:[{label:"Énergie (kWh)",data:d.serie.v,borderColor:"#5eead4",backgroundColor:"rgba(94,234,212,.18)",fill:true,tension:.35,pointRadius:2}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+   scales:{x:{ticks:{color:"#9fc4bc",maxTicksLimit:8},grid:{color:"#1f3d37"}},y:{beginAtZero:true,ticks:{color:"#9fc4bc"},grid:{color:"#1f3d37"}}}}});
+}
+function ouvrir(s){
+ var d=INFO[s.id];if(!d)return;
+ sel=s;
+ document.getElementById("bkNom").textContent=d.nom;
+ document.getElementById("bkSub").innerHTML=esc(NOMS[d.etage-1])+" · <span style='color:"+CSSC[d.niv]+"'>"+LIB[d.niv]+"</span>";
+ document.getElementById("bkLien").href="/salle/"+d.id;
+ document.getElementById("bkStats").innerHTML=
+  "<div class='bk-st'><small>Puissance actuelle</small><b>"+d.puissance.toFixed(2)+" kW</b></div>"+
+  "<div class='bk-st'><small>Énergie (24 h)</small><b>"+d.energie24.toFixed(2)+" kWh</b></div>"+
+  "<div class='bk-st'><small>Équipements</small><b>"+d.nb_equip+"</b></div>";
+ document.getElementById("bkAlH").innerHTML="Alertes"+(d.nb_alertes?" <span>"+d.nb_actives+" active(s) · "+d.nb_alertes+" au total</span>":"");
+ document.getElementById("bkOpH").innerHTML="Optimisations"+(d.nb_opt?" <span>"+d.nb_attente+" en attente · "+d.nb_opt+" au total</span>":"");
+ document.getElementById("bkAl").innerHTML=listeAlertes(d.alertes);
+ document.getElementById("bkOp").innerHTML=listeOptim(d.optims);
+ tracer(d);
+ flip.classList.add("on");
+}
+document.getElementById("sem3dRetour").addEventListener("click",function(){flip.classList.remove("on");sel=null});
+
+/* ===== BOUTONS D'ÉTAGES ===== */
+var bar=document.getElementById("sem3dEtages");
+["Tous les étages"].concat(NOMS).forEach(function(t,i){
+ var b=document.createElement("button");b.type="button";b.textContent=t;if(i===0)b.className="on";
+ b.onclick=function(){
+  filtre=i-1;[].forEach.call(bar.children,function(c){c.className=""});b.className="on";
+  groupes.forEach(function(g,k){g.visible=filtre<0||k===filtre});
+  zoom=filtre<0?26:17;centrer();sel=null};
+ bar.appendChild(b);
+});
+
+/* ===== BOUCLE ===== */
+var t0=0;
+function boucle(){
+ t0+=.04;
+ if(!drag&&!sel)rotY+=.003;
+ salles.forEach(function(s){
+  var base=s===sel?.5:.22;
+  s.mat.opacity=(s.niv===2&&s!==sel)?base+Math.sin(t0*2)*.07:base});
+ cam();renderer.render(scene,camera);requestAnimationFrame(boucle)}
+centrer();taille();boucle();
+})();
+</script>
+"""
+
+
+def donnees_salles(cur):
+    """Données de la maquette 3D de l'accueil : (4 étages de salles, détails par salle).
+    Les salles sont réparties sur les 4 étages comme sur la page Bâtiment (une sur quatre)."""
+    salles = cur.execute("SELECT id, nom FROM salles ORDER BY id").fetchall()
+
+    # fenêtre des 24 dernières heures, calculée depuis la dernière mesure (utilise l'index sur date_heure)
+    derniere = scalar(cur, "SELECT MAX(date_heure) FROM consommations") or None
+    cutoff = ""
+    try:
+        cutoff = (datetime.strptime(str(derniere)[:19], "%Y-%m-%d %H:%M:%S")
+                  - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+    series = {}
+    for r in cur.execute("""
+            SELECT q.salle_id AS sid, substr(c.date_heure,1,13) AS h, SUM(c.energie) AS e
+            FROM consommations c JOIN equipements q ON q.id = c.equipement_id
+            WHERE c.date_heure >= ? GROUP BY q.salle_id, h ORDER BY h""", (cutoff,)).fetchall():
+        series.setdefault(r["sid"], []).append((r["h"][5:] + "h", safe_float(r["e"])))
+    puissance = {r["sid"]: safe_float(r["p"]) for r in cur.execute("""
+            SELECT q.salle_id AS sid, SUM(c.puissance) AS p
+            FROM consommations c JOIN equipements q ON q.id = c.equipement_id
+            WHERE c.date_heure = (SELECT MAX(date_heure) FROM consommations)
+            GROUP BY q.salle_id""").fetchall()}
+
+    etages = [[] for _ in range(4)]
+    infos = {}
+    for i, s in enumerate(salles):
+        sid = s["id"]
+        al = cur.execute("""
+            SELECT a.niveau, a.statut, a.date_heure, a.message, e.nom AS equipement
+            FROM alertes a LEFT JOIN equipements e ON e.id = a.equipement_id
+            WHERE a.salle_id = ? ORDER BY a.date_heure DESC, a.id DESC LIMIT 6""", (sid,)).fetchall()
+        nb_al, nb_act = cur.execute(
+            "SELECT COUNT(*), COALESCE(SUM(UPPER(statut)='ACTIVE'),0) FROM alertes WHERE salle_id = ?",
+            (sid,)).fetchone()
+        niv = scalar(cur, """
+            SELECT MAX(CASE niveau WHEN 'TRÈS ÉLEVÉ' THEN 2 ELSE 1 END)
+            FROM alertes WHERE salle_id = ? AND UPPER(statut) = 'ACTIVE'""", (sid,))
+        op = cur.execute("""
+            SELECT o.titre, o.gain_estime, o.statut, o.date_heure, e.nom AS equipement
+            FROM optimisations o LEFT JOIN equipements e ON e.id = o.equipement_id
+            WHERE o.salle_id = ? ORDER BY o.date_heure DESC, o.id DESC LIMIT 6""", (sid,)).fetchall()
+        nb_op, nb_att = cur.execute(
+            "SELECT COUNT(*), COALESCE(SUM(UPPER(statut)='EN ATTENTE'),0) FROM optimisations WHERE salle_id = ?",
+            (sid,)).fetchone()
+        nb_equip = scalar(cur, "SELECT COUNT(*) FROM equipements WHERE salle_id = ?", (sid,))
+        serie = series.get(sid, [])
+        etage = i % 4
+        etages[etage].append({"id": sid, "nom": s["nom"], "niv": niv})
+        infos[sid] = {
+            "id": sid, "nom": s["nom"], "etage": etage + 1, "niv": niv,
+            "puissance": puissance.get(sid, 0),
+            "energie24": round(sum(v for _, v in serie), 3),
+            "nb_equip": nb_equip,
+            "nb_alertes": nb_al, "nb_actives": nb_act,
+            "nb_opt": nb_op, "nb_attente": nb_att,
+            "alertes": [{"niveau": str(a["niveau"] or "INFO").upper(),
+                         "active": str(a["statut"] or "").upper() == "ACTIVE",
+                         "date": format_date(a["date_heure"]),
+                         "message": (a["message"] or "-")[:110],
+                         "equipement": a["equipement"] or "-"} for a in al],
+            "optims": [{"titre": o["titre"] or "-",
+                        "gain": f'{safe_float(o["gain_estime"]):.0f}',
+                        "attente": str(o["statut"] or "").upper() == "EN ATTENTE",
+                        "date": format_date(o["date_heure"]),
+                        "equipement": o["equipement"] or "-"} for o in op],
+            "serie": {"l": [t for t, _ in serie], "v": [v for _, v in serie]},
+        }
+    return etages, infos
+
+
 @app.route("/")
 def home():
     # ---------- visiteur non connecté : page de bienvenue ----------
@@ -901,6 +1205,7 @@ def home():
         FROM equipements e LEFT JOIN consommations c ON c.equipement_id = e.id
         GROUP BY e.nom ORDER BY energie DESC""")
     types = cur.fetchall()
+    etages3d, infos3d = donnees_salles(cur)
     db.close()
 
     nom = esc(session.get("user_name", ""))
@@ -922,7 +1227,7 @@ def home():
         f'<div class="actions"><a class="hbtn primary" href="/alertes">Voir les alertes</a>'
         f'<a class="hbtn ghost" href="/batiment">Explorer le bâtiment</a></div></div>'
         f'<div class="orbs"><span></span><span></span><span></span><b>SE</b></div></section>'
-        + stats +
+        + fill(BAT3D_HTML, DATA=json_data(etages3d), INFO=json_data(infos3d)) + stats +
         '<div class="main2">' + pipeline_html(n_mesures, n_alertes, n_opt) + gauge_html() + '</div>'
         '<div class="section-title"><h2>Consommation en direct</h2>'
         '<p>Mise à jour automatique des compteurs toutes les 10 secondes.</p></div>'
@@ -1014,14 +1319,17 @@ def salle(salle_id):
 
 
 # ============================================================
-# BÂTIMENT 3D (three r128 + 3 CDN de secours + plan 2D si WebGL échoue)
+# BÂTIMENT 3D (page /batiment) : maquette transparente en haut, cartes des salles en bas.
+# Les salles en alerte sont colorées ; un clic sur une salle amène à sa carte.
+# three r128 + 3 CDN de secours + plan 2D si WebGL échoue
 # ============================================================
 
 BUILDING_JS = """<script>
 (function(){
-var host=document.getElementById("building3d"),SEL=__SEL__;
+var host=document.getElementById("building3d"),SEL=__SEL__,DATA=__DATA__;
 if(!host)return;
 var NAMES=["","Rez-de-chaussée","1er étage","2e étage","3e étage"];
+var COL=[0x5eead4,0xf59e0b,0xef4444];   /* normal / ÉLEVÉ / TRÈS ÉLEVÉ */
 var SRC=["https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
  "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js",
  "https://unpkg.com/three@0.128.0/build/three.min.js"];
@@ -1033,50 +1341,82 @@ function fallback(){
  host.innerHTML=h+"</svg>";
 }
 
+function ouvrir(id,floor){
+ var card=document.getElementById("salle-"+id);
+ if(card){
+  document.querySelectorAll(".room-card.sel").forEach(function(c){c.classList.remove("sel")});
+  card.classList.add("sel");
+  card.scrollIntoView({behavior:"smooth",block:"center"});
+ }else{
+  window.location.href="/batiment/"+floor+"#salle-"+id;
+ }
+}
+
 function init(){
- var W=Math.max(host.clientWidth,300),H=390;
- var renderer=new THREE.WebGLRenderer({antialias:true});
+ var W=Math.max(host.clientWidth,300),H=Math.max(host.clientHeight,420);
+ var renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));renderer.setSize(W,H);
  host.innerHTML="";host.appendChild(renderer.domElement);
- var scene=new THREE.Scene();scene.background=new THREE.Color(0x0f3f3a);
- var camera=new THREE.PerspectiveCamera(42,W/H,.1,100);camera.position.set(8,6,10);
- scene.add(new THREE.AmbientLight(0xffffff,.8));
- var dl=new THREE.DirectionalLight(0xffffff,.9);dl.position.set(5,9,6);scene.add(dl);
- var building=new THREE.Group();scene.add(building);
- var floors=[];
- for(var i=0;i<4;i++){
-  var col=(i+1===SEL)?0x38d9b0:0xb9e5c7;
-  var f=new THREE.Mesh(new THREE.BoxGeometry(4.2,.85,3.2),new THREE.MeshStandardMaterial({color:col,roughness:.6}));
-  f.position.y=i*1.05+.55;f.userData.floor=i+1;building.add(f);floors.push(f);
-  var slab=new THREE.Mesh(new THREE.BoxGeometry(4.35,.12,3.35),new THREE.MeshStandardMaterial({color:0x17643e}));
-  slab.position.y=i*1.05+.08;building.add(slab);
-  for(var w=0;w<3;w++){
-   var win=new THREE.Mesh(new THREE.BoxGeometry(.65,.42,.04),new THREE.MeshStandardMaterial({color:0x238653}));
-   win.position.set(-1.35+w*1.35,i*1.05+.58,1.62);building.add(win);}
- }
- var roof=new THREE.Mesh(new THREE.ConeGeometry(2.8,1.3,4),new THREE.MeshStandardMaterial({color:0x17643e}));
- roof.rotation.y=Math.PI/4;roof.position.y=4.9;building.add(roof);
- var ground=new THREE.Mesh(new THREE.BoxGeometry(7,.15,5.5),new THREE.MeshStandardMaterial({color:0x28563c}));
- ground.position.y=-.08;scene.add(ground);
+ var scene=new THREE.Scene();
+ var camera=new THREE.PerspectiveCamera(40,W/H,.1,200);
+ scene.add(new THREE.AmbientLight(0xffffff,.7));
+ var dl=new THREE.DirectionalLight(0xffffff,.7);dl.position.set(6,14,8);scene.add(dl);
 
- var drag=false,moved=0,lx=0,ly=0,rotY=-.5,rotX=.1;
+ /* 4 étages au même périmètre, bien écartés ; les salles se partagent ce périmètre */
+ var PAS=3.3,RH=1.8,WT=8.3,DT=6.3,GAP=.15;
+ var nmax=1;DATA.forEach(function(f){nmax=Math.max(nmax,f.length)});
+ var cols=nmax<=4?2:Math.ceil(Math.sqrt(nmax)),rows=Math.ceil(nmax/cols);
+ var rw=(WT-GAP*(cols+1))/cols,rd=(DT-GAP*(rows+1))/rows;
+
+ var building=new THREE.Group();scene.add(building);
+ var rooms=[],selId=null;
+ for(var i=0;i<4;i++){
+  var g=new THREE.Group();g.position.y=i*PAS;building.add(g);
+  var slab=new THREE.Mesh(new THREE.BoxGeometry(WT,.12,DT),
+   new THREE.MeshStandardMaterial({color:(i+1===SEL)?0x2a8f80:0x1b4a42,transparent:true,opacity:.85}));
+  slab.position.y=-.06;g.add(slab);
+  (DATA[i]||[]).forEach(function(s,j){
+   var c=j%cols,r=Math.floor(j/cols);
+   var x=-WT/2+GAP+rw/2+c*(rw+GAP),z=-DT/2+GAP+rd/2+r*(rd+GAP);
+   var mat=new THREE.MeshStandardMaterial({color:COL[s.niv],transparent:true,opacity:.22,depthWrite:false,side:THREE.DoubleSide});
+   var m=new THREE.Mesh(new THREE.BoxGeometry(rw,RH,rd),mat);
+   m.position.set(x,RH/2,z);m.userData={id:s.id,floor:i+1};g.add(m);
+   var edge=new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry),
+    new THREE.LineBasicMaterial({color:COL[s.niv],transparent:true,opacity:.9}));
+   m.add(edge);
+   rooms.push({mesh:m,mat:mat,id:s.id,niv:s.niv});
+  });
+ }
+ building.position.y=-(3*PAS+RH)/2;
+
+ var drag=false,moved=0,lx=0,ly=0,rotY=-.6,rotX=.45,zoom=26,t0=0;
  host.addEventListener("pointerdown",function(e){drag=true;moved=0;lx=e.clientX;ly=e.clientY});
  window.addEventListener("pointerup",function(){drag=false});
  host.addEventListener("pointermove",function(e){if(!drag)return;
   moved+=Math.abs(e.clientX-lx)+Math.abs(e.clientY-ly);
-  rotY+=(e.clientX-lx)*.008;rotX=Math.max(-.4,Math.min(.4,rotX+(e.clientY-ly)*.004));lx=e.clientX;ly=e.clientY});
- host.addEventListener("wheel",function(e){e.preventDefault();camera.position.multiplyScalar(e.deltaY>0?1.08:.92);camera.position.clampLength(7,20)},{passive:false});
+  rotY-=(e.clientX-lx)*.008;rotX=Math.max(.05,Math.min(1.35,rotX+(e.clientY-ly)*.006));lx=e.clientX;ly=e.clientY});
+ host.addEventListener("wheel",function(e){e.preventDefault();zoom=Math.max(12,Math.min(42,zoom+e.deltaY*.03))},{passive:false});
  var ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
  host.addEventListener("click",function(e){
   if(moved>6)return;
   var r=host.getBoundingClientRect();
   mouse.x=((e.clientX-r.left)/r.width)*2-1;mouse.y=-((e.clientY-r.top)/r.height)*2+1;
-  ray.setFromCamera(mouse,camera);var hit=ray.intersectObjects(floors);
-  if(hit.length)window.location.href="/batiment/"+hit[0].object.userData.floor;});
+  ray.setFromCamera(mouse,camera);
+  var hit=ray.intersectObjects(rooms.map(function(x){return x.mesh}));
+  if(hit.length){var u=hit[0].object.userData;selId=u.id;ouvrir(u.id,u.floor)}
+ });
+ if(location.hash.indexOf("#salle-")===0){
+  selId=parseInt(location.hash.slice(7),10);
+  var c0=document.getElementById("salle-"+selId);if(c0)c0.classList.add("sel");
+ }
  (function loop(){requestAnimationFrame(loop);
-  if(!drag)rotY+=.004;
-  building.rotation.y=rotY;building.rotation.x=rotX;camera.lookAt(0,2,0);renderer.render(scene,camera)})();
- window.addEventListener("resize",function(){var w=Math.max(host.clientWidth,300);camera.aspect=w/H;camera.updateProjectionMatrix();renderer.setSize(w,H)});
+  t0+=.04;if(!drag&&selId===null)rotY+=.003;
+  rooms.forEach(function(x){
+   var base=x.id===selId?.5:.22;
+   x.mat.opacity=(x.niv===2&&x.id!==selId)?base+Math.sin(t0*2)*.07:base});
+  camera.position.set(Math.sin(rotY)*Math.cos(rotX)*zoom,Math.sin(rotX)*zoom,Math.cos(rotY)*Math.cos(rotX)*zoom);
+  camera.lookAt(0,0,0);renderer.render(scene,camera)})();
+ window.addEventListener("resize",function(){var w=Math.max(host.clientWidth,300),h=Math.max(host.clientHeight,420);camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h)});
 }
 
 function load(i){
@@ -1105,20 +1445,32 @@ def batiment(etage=0):
         LEFT JOIN consommations c ON c.equipement_id = e.id
         GROUP BY s.id, s.nom, s.description, s.localisation ORDER BY s.id""")
     toutes = cur.fetchall()
+    # niveau d'alerte actif par salle : 0 = normal, 1 = ÉLEVÉ, 2 = TRÈS ÉLEVÉ
+    niv = {r["salle_id"]: r["n"] for r in cur.execute("""
+        SELECT salle_id,
+               MAX(CASE niveau WHEN 'TRÈS ÉLEVÉ' THEN 2 ELSE 1 END) AS n
+        FROM alertes WHERE UPPER(statut)='ACTIVE' AND salle_id IS NOT NULL
+        GROUP BY salle_id""").fetchall()}
     db.close()
 
     etage = max(0, min(4, etage))
     noms = {1: "Rez-de-chaussée", 2: "1er étage", 3: "2e étage", 4: "3e étage"}
     # Les salles sont réparties sur les étages sans modifier la base.
     salles_etage = toutes if etage == 0 else [s for i, s in enumerate(toutes) if i % 4 == etage - 1]
+    data3d = [[{"id": s["id"], "nom": s["nom"], "niv": niv.get(s["id"], 0)}
+               for i, s in enumerate(toutes) if i % 4 == k] for k in range(4)]
+    couleurs = {1: "#f59e0b", 2: "#ef4444"}
 
     if not salles_etage:
         salles_html = '<div class="card"><h3>Aucune salle à cet étage</h3><p>Choisissez un autre étage.</p></div>'
     else:
-        salles_html = '<div class="grid-2">'
+        salles_html = '<div class="grid-3">'
         for s in salles_etage:
+            n = niv.get(s["id"], 0)
+            bord = f' style="border-left:6px solid {couleurs[n]}"' if n else ""
             salles_html += (
-                f'<a class="room-card" href="/salle/{s["id"]}"><div class="room-top"><div class="room-icon">'
+                f'<a class="room-card" id="salle-{s["id"]}" href="/salle/{s["id"]}"{bord}>'
+                '<div class="room-top"><div class="room-icon">'
                 '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">'
                 '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h2m2 0h2M9 11h2m2 0h2M9 15h2m2 0h2M10 21v-3h4v3"/></svg>'
                 '</div><span class="status-normal">SURVEILLÉE</span></div>'
@@ -1130,25 +1482,29 @@ def batiment(etage=0):
 
     floors = (f'<a class="floor-button{" selected" if etage == 0 else ""}" href="/batiment">'
               f'<span>Toutes les salles</span><span class="floor-badge">{len(toutes)}</span></a>')
-    for n, nom in noms.items():
-        sel = " selected" if n == etage else ""
-        floors += (f'<a class="floor-button{sel}" href="/batiment/{n}"><span>{nom}</span>'
-                   f'<span class="floor-badge">Étage {n}</span></a>')
+    for n_, nom in noms.items():
+        sel = " selected" if n_ == etage else ""
+        floors += (f'<a class="floor-button{sel}" href="/batiment/{n_}"><span>{nom}</span>'
+                   f'<span class="floor-badge">Étage {n_}</span></a>')
     label = "Tous les étages" if etage == 0 else noms[etage]
 
     content = (
         header("GESTION DES ESPACES", "Bâtiment intelligent",
                "Explorez le bâtiment en 3D et consultez les salles, équipements et consommations.")
-        + '<div class="building-layout"><section class="building-visual">'
+        + '<style>.room-card.sel{outline:3px solid #168b83;outline-offset:2px}</style>'
+        '<section class="building-visual">'
         '<div style="font-size:11px;letter-spacing:2px;color:#b9e9c9;font-weight:800">SMART ENERGY MONITOR</div>'
         '<h2 style="margin-top:6px">Votre établissement</h2>'
-        '<div id="building3d" class="building-3d"><div class="three-loading">Chargement du bâtiment 3D…</div></div>'
-        '<div class="three-help">Glissez pour tourner · Molette pour zoomer · Cliquez sur un étage</div>'
-        '</section><section><div class="section-title" style="margin-top:0"><h2>Choisir un étage</h2></div>'
-        f'<div class="floor-list">{floors}</div>'
+        '<div id="building3d" class="building-3d" style="height:560px">'
+        '<div class="three-loading">Chargement du bâtiment 3D…</div></div>'
+        '<div class="three-help">Glissez pour tourner · Molette pour zoomer · Cliquez sur une salle · '
+        'Turquoise : normal · Orange : élevé · Rouge : très élevé</div>'
+        '</section>'
+        '<div class="section-title"><h2>Choisir un étage</h2></div>'
+        f'<div class="floor-list" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">{floors}</div>'
         f'<div class="section-title"><h2>{label}</h2><p>{len(salles_etage)} salle(s) trouvée(s)</p></div>'
-        f'{salles_html}</section></div>'
-        + fill(BUILDING_JS, SEL=etage)
+        f'{salles_html}'
+        + fill(BUILDING_JS, SEL=etage, DATA=json_data(data3d))
     )
     return page_template("Bâtiment", content, "batiment")
 
@@ -1554,6 +1910,7 @@ def inscription():
                 session.clear()
                 session.permanent = True
                 session["user_id"], session["user_name"], session["user_email"] = user_id, nom, email
+                session["user_photo"] = ""
                 return redirect(url_for("home"))
             except sqlite3.IntegrityError:
                 message = "Cette adresse e-mail possède déjà un compte."
@@ -1587,6 +1944,7 @@ def connexion():
             session.clear()
             session.permanent = True
             session["user_id"], session["user_name"], session["user_email"] = user["id"], user["nom"], user["email"]
+            session["user_photo"] = user["photo"] or ""
             return redirect(suite or url_for("home"))
         message = "Adresse e-mail ou mot de passe incorrect."
     msg = f'<div class="auth-message">{esc(message)}</div>' if message else ""
@@ -1602,15 +1960,262 @@ def connexion():
     return page_template("Connexion", content, "home")
 
 
+# ============================================================
+# AJOUT : PROFIL UTILISATEUR (photo, nom, e-mail, mot de passe, suppression)
+# ============================================================
+
+AVATAR_DIR = BASE_DIR / "database" / "avatars"
+AVATAR_MAX = 2 * 1024 * 1024  # 2 Mo
+
+PROFIL_CSS = """
+.profil-chip{display:inline-flex;align-items:center;gap:9px;padding:5px 14px 5px 5px;border-radius:30px;border:1px solid var(--line);background:var(--soft);color:var(--accent2);font-weight:800;font-size:12px;text-decoration:none;max-width:220px;transition:transform .2s,box-shadow .2s}
+.profil-chip:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+.profil-chip .pn{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.avatar{display:inline-flex;align-items:center;justify-content:center;border-radius:50%;object-fit:cover;flex:none;background:linear-gradient(135deg,#168b83,#39b8a5);color:#fff;font-weight:900}
+.pf-top{display:flex;align-items:center;gap:22px;flex-wrap:wrap;padding:26px;margin-bottom:18px;background:linear-gradient(120deg,#0d4a45,#14796d 60%,#1c9a86);color:#eafbf7;border-radius:26px;box-shadow:var(--shadow)}
+.pf-top h2{font-size:26px;color:#fff;letter-spacing:-.5px}
+.pf-top p{color:#cdeee6;font-size:13px;margin-top:4px}
+.pf-top .avatar{border:3px solid rgba(255,255,255,.55)}
+.pf-card{margin-bottom:18px}
+.pf-card h3{margin-bottom:14px}
+.pf-card>p{margin:0 0 14px}
+.pf-card .auth-form button{justify-self:start;padding:11px 18px;font-size:13px}
+.pf-photo{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:14px}
+.pf-danger{border-color:#f0b9b9}
+.pf-danger h3{color:#c24141}
+.pf-danger .auth-form button{background:#c24141}
+.pf-flash{padding:12px 16px;border-radius:12px;font-weight:700;font-size:13px;margin-bottom:16px}
+.pf-flash.ok{background:var(--soft);color:var(--accent2)}
+.pf-flash.err{background:#fff0f0;color:#c24141}
+"""
+
+
+def type_image(data):
+    """Reconnaît une vraie image par son contenu (pas seulement par son nom)."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if data[:4] == b"GIF8":
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def initiales(nom):
+    mots = [m for m in str(nom or "").split() if m]
+    if not mots:
+        return "?"
+    return (mots[0][0] + (mots[1][0] if len(mots) > 1 else "")).upper()
+
+
+def avatar_html(taille=36, nom=None, photo=None, extra=""):
+    nom = session.get("user_name", "") if nom is None else nom
+    photo = session.get("user_photo", "") if photo is None else photo
+    s = f"width:{taille}px;height:{taille}px"
+    if photo:
+        return f'<img class="avatar" {extra} src="/avatar?v={esc(photo)}" alt="Photo de profil" style="{s}">'
+    return (f'<span class="avatar" {extra} style="{s};font-size:{max(11, taille // 3)}px">'
+            f'{esc(initiales(nom))}</span>')
+
+
+def profil_chip():
+    return (f'<a class="profil-chip" href="/compte" title="Mon profil">{avatar_html(30)}'
+            f'<span class="pn">{esc(session.get("user_name", ""))}</span></a>')
+
+
+def flash_msg(genre, texte):
+    session["flash"] = [genre, texte]
+
+
+def supprimer_fichiers_photo(uid):
+    if AVATAR_DIR.exists():
+        for f in AVATAR_DIR.glob(f"{uid}_*"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
+PROFIL_JS = """<script>
+(function(){
+var f=document.getElementById("pfFile");if(!f)return;
+f.addEventListener("change",function(){
+ var file=f.files[0];if(!file)return;var url=URL.createObjectURL(file);
+ [["pfPrev",72],["pfBig",96]].forEach(function(p){
+  var el=document.getElementById(p[0]);if(!el)return;
+  var img=document.createElement("img");img.className="avatar";img.id=p[0];
+  img.style.cssText="width:"+p[1]+"px;height:"+p[1]+"px";img.src=url;el.replaceWith(img)})});
+})();
+</script>"""
+
+
+@app.route("/avatar")
+def avatar():
+    nom_f = session.get("user_photo", "")
+    if not nom_f or "/" in nom_f or "\\" in nom_f:
+        abort(404)
+    return send_from_directory(AVATAR_DIR, nom_f)
+
+
 @app.route("/compte")
 def compte():
+    db = get_db()
+    u = db.execute("SELECT * FROM utilisateurs WHERE id=?", (session["user_id"],)).fetchone()
+    db.close()
+    if not u:
+        session.clear()
+        return redirect(url_for("connexion"))
+    fl = session.pop("flash", None)
+    flash_html = ""
+    if fl:
+        flash_html = f'<div class="pf-flash {"ok" if fl[0] == "ok" else "err"}">{esc(fl[1])}</div>'
+
+    nom, email = u["nom"], u["email"]
+    photo = u["photo"] or ""
+    tel, poste = esc(u["telephone"] or ""), esc(u["poste"] or "")
+    depuis = format_date(u["date_creation"])[:10]
+    tok = csrf_input()
+    gros = avatar_html(96, nom, photo, 'id="pfBig"')
+    apercu = avatar_html(72, nom, photo, 'id="pfPrev"')
+    retirer = ""
+    if photo:
+        retirer = (f'<form method="post" action="/compte/photo/supprimer" style="margin-top:12px">{tok}'
+                   '<button class="btn light" type="submit">Supprimer ma photo</button></form>')
+
     content = (
-        header("ESPACE PERSONNEL", "Mon compte", "Informations de votre profil utilisateur.")
+        header("ESPACE PERSONNEL", "Mon profil",
+               "Gérez vos informations, votre photo et la sécurité de votre compte.")
+        + flash_html
+        + f'<section class="pf-top rise">{gros}<div><h2>{esc(nom)}</h2><p>{esc(email)}</p>'
+          f'<p>{poste or "Poste non renseigné"} · Membre depuis le {depuis}</p></div></section>'
         + '<div class="grid-2">'
-        + stat("Nom", esc(session.get("user_name", "Utilisateur")))
-        + stat("Adresse e-mail", esc(session.get("user_email", "")))
-        + '</div><div style="margin-top:22px"><a class="toolbar-button logout-link" href="/deconnexion">Déconnexion</a></div>')
-    return page_template("Mon compte", content, "home")
+        + f'''<div class="card pf-card"><h3>Informations personnelles</h3>
+<form class="auth-form" method="post" action="/compte/profil">{tok}
+<label>Nom complet<input name="nom" value="{esc(nom)}" maxlength="80" required></label>
+<label>Adresse e-mail<input name="email" type="email" value="{esc(email)}" maxlength="120" required></label>
+<label>Téléphone<input name="telephone" value="{tel}" maxlength="30" placeholder="Facultatif"></label>
+<label>Poste / fonction<input name="poste" value="{poste}" maxlength="80" placeholder="Facultatif"></label>
+<button type="submit">Enregistrer les modifications</button></form></div>'''
+        + f'''<div class="card pf-card"><h3>Photo de profil</h3>
+<div class="pf-photo">{apercu}<p style="color:var(--muted);font-size:12px;line-height:1.6;margin:0">PNG, JPG, GIF ou WebP · 2 Mo maximum.</p></div>
+<form class="auth-form" method="post" action="/compte/photo" enctype="multipart/form-data">{tok}
+<label>Choisir une image<input id="pfFile" type="file" name="photo" accept="image/png,image/jpeg,image/gif,image/webp" required></label>
+<button type="submit">Enregistrer la photo</button></form>{retirer}</div>'''
+        + '</div><div class="grid-2">'
+        + f'''<div class="card pf-card"><h3>Mot de passe</h3>
+<form class="auth-form" method="post" action="/compte/mot-de-passe">{tok}
+<label>Mot de passe actuel<input name="actuel" type="password" autocomplete="current-password" required></label>
+<label>Nouveau mot de passe<input name="nouveau" type="password" minlength="8" autocomplete="new-password" required></label>
+<label>Confirmer le nouveau mot de passe<input name="confirmation" type="password" minlength="8" autocomplete="new-password" required></label>
+<button type="submit">Changer le mot de passe</button></form></div>'''
+        + f'''<div class="card pf-card pf-danger"><h3>Zone sensible</h3>
+<p>Supprimer définitivement votre compte. Cette action est irréversible.</p>
+<form class="auth-form" method="post" action="/compte/supprimer" onsubmit="return confirm(&quot;Supprimer définitivement votre compte ?&quot;)">{tok}
+<label>Confirmez avec votre mot de passe<input name="mot_de_passe" type="password" autocomplete="current-password" required></label>
+<button type="submit">Supprimer mon compte</button></form></div>'''
+        + '</div><div style="margin-top:8px"><a class="toolbar-button logout-link" href="/deconnexion">Déconnexion</a></div>'
+        + PROFIL_JS
+    )
+    return page_template("Mon profil", content, "home")
+
+
+@app.route("/compte/profil", methods=["POST"])
+def compte_profil():
+    nom = request.form.get("nom", "").strip()[:80]
+    email = request.form.get("email", "").strip().lower()[:120]
+    tel = request.form.get("telephone", "").strip()[:30]
+    poste = request.form.get("poste", "").strip()[:80]
+    if not nom or "@" not in email or "." not in email.split("@")[-1]:
+        flash_msg("err", "Le nom et une adresse e-mail valide sont obligatoires.")
+        return redirect(url_for("compte"))
+    try:
+        ecrire("UPDATE utilisateurs SET nom=?, email=?, telephone=?, poste=? WHERE id=?",
+               (nom, email, tel, poste, session["user_id"]))
+    except sqlite3.IntegrityError:
+        flash_msg("err", "Cette adresse e-mail est déjà utilisée par un autre compte.")
+        return redirect(url_for("compte"))
+    session["user_name"], session["user_email"] = nom, email
+    flash_msg("ok", "Vos informations ont été mises à jour.")
+    return redirect(url_for("compte"))
+
+
+@app.route("/compte/photo", methods=["POST"])
+def compte_photo():
+    uid = session["user_id"]
+    fichier = request.files.get("photo")
+    data = fichier.read(AVATAR_MAX + 1) if fichier else b""
+    if not data:
+        flash_msg("err", "Aucune image choisie.")
+    elif len(data) > AVATAR_MAX:
+        flash_msg("err", "L'image dépasse 2 Mo.")
+    else:
+        ext = type_image(data)
+        if not ext:
+            flash_msg("err", "Format non pris en charge : utilisez PNG, JPG, GIF ou WebP.")
+        else:
+            AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+            supprimer_fichiers_photo(uid)
+            nom_f = f"{uid}_{int(datetime.now().timestamp())}.{ext}"
+            (AVATAR_DIR / nom_f).write_bytes(data)
+            ecrire("UPDATE utilisateurs SET photo=? WHERE id=?", (nom_f, uid))
+            session["user_photo"] = nom_f
+            flash_msg("ok", "Votre photo de profil a été mise à jour.")
+    return redirect(url_for("compte"))
+
+
+@app.route("/compte/photo/supprimer", methods=["POST"])
+def compte_photo_supprimer():
+    uid = session["user_id"]
+    supprimer_fichiers_photo(uid)
+    ecrire("UPDATE utilisateurs SET photo='' WHERE id=?", (uid,))
+    session["user_photo"] = ""
+    flash_msg("ok", "Votre photo de profil a été supprimée.")
+    return redirect(url_for("compte"))
+
+
+@app.route("/compte/mot-de-passe", methods=["POST"])
+def compte_mot_de_passe():
+    db = get_db()
+    u = db.execute("SELECT mot_de_passe FROM utilisateurs WHERE id=?", (session["user_id"],)).fetchone()
+    db.close()
+    actuel = request.form.get("actuel", "")
+    nouveau = request.form.get("nouveau", "")
+    conf = request.form.get("confirmation", "")
+    if not u or not check_password_hash(u["mot_de_passe"], actuel):
+        flash_msg("err", "Le mot de passe actuel est incorrect.")
+    elif len(nouveau) < 8:
+        flash_msg("err", "Le nouveau mot de passe doit contenir au moins 8 caractères.")
+    elif nouveau != conf:
+        flash_msg("err", "Les deux nouveaux mots de passe ne correspondent pas.")
+    else:
+        ecrire("UPDATE utilisateurs SET mot_de_passe=? WHERE id=?",
+               (generate_password_hash(nouveau), session["user_id"]))
+        flash_msg("ok", "Votre mot de passe a été changé.")
+    return redirect(url_for("compte"))
+
+
+@app.route("/compte/supprimer", methods=["POST"])
+def compte_supprimer():
+    uid = session["user_id"]
+    db = get_db()
+    u = db.execute("SELECT mot_de_passe FROM utilisateurs WHERE id=?", (uid,)).fetchone()
+    db.close()
+    if not u or not check_password_hash(u["mot_de_passe"], request.form.get("mot_de_passe", "")):
+        flash_msg("err", "Mot de passe incorrect : le compte n'a pas été supprimé.")
+        return redirect(url_for("compte"))
+    supprimer_fichiers_photo(uid)
+    ecrire("DELETE FROM utilisateurs WHERE id=?", (uid,))
+    session.clear()
+    return redirect(url_for("home"))
+
+
+@app.errorhandler(413)
+def fichier_trop_gros(error):
+    content = ('<div class="card"><h3>Fichier trop volumineux</h3><p>Choisissez une image de moins de 2 Mo.</p>'
+               '<a class="btn" href="/compte">Retour à mon profil</a></div>')
+    return page_template("Fichier trop volumineux", content, "home"), 413
 
 
 @app.route("/deconnexion")
